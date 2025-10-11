@@ -3,7 +3,7 @@
 # Script for Sing-Box Hysteria2 & Reality Management
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试ipv4 v1"
+AUTHOR_NAME="singbox脚本测试ipv4 v2"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -40,7 +40,7 @@ LAST_REALITY_PORT=""
 LAST_REALITY_UUID=""
 LAST_REALITY_PUBLIC_KEY="" # 公钥需要显示
 LAST_REALITY_SNI=""
-LAST_REALITY_SHORT_ID="7ae76b7d4e86f9d4e" # 默认值
+LAST_REALITY_SHORT_ID="" # 将动态生成
 LAST_REALITY_FINGERPRINT="chrome"    # 默认值
 LAST_VLESS_LINK=""
 LAST_INSTALL_MODE="" # "all", "hysteria2", "reality", 或 ""
@@ -301,7 +301,7 @@ generate_reality_credentials() {
         error "Sing-box command 未设置。无法生成凭证。"
         return 1
     fi
-    info "使用命令 '$SINGBOX_CMD' 生成 Reality UUID 和 Keypair..."
+    info "使用命令 '$SINGBOX_CMD' 生成 Reality 凭证..."
     
     REALITY_UUID_VAL=$($SINGBOX_CMD generate uuid)
     if [ $? -ne 0 ] || [ -z "$REALITY_UUID_VAL" ]; then
@@ -319,8 +319,11 @@ generate_reality_credentials() {
     REALITY_PRIVATE_KEY_VAL=$(echo "$KEY_PAIR_OUTPUT" | awk -F': ' '/PrivateKey:/ {print $2}' | xargs)
     REALITY_PUBLIC_KEY_VAL=$(echo "$KEY_PAIR_OUTPUT" | awk -F': ' '/PublicKey:/ {print $2}' | xargs)
 
-    if [ -z "$REALITY_UUID_VAL" ] || [ -z "$REALITY_PRIVATE_KEY_VAL" ] || [ -z "$REALITY_PUBLIC_KEY_VAL" ]; then
-        error "生成 Reality凭证失败 (UUID, Private Key, 或 Public Key 在解析后为空)."
+    # *** 新增：动态生成随机的、格式正确的 short_id ***
+    LAST_REALITY_SHORT_ID=$(openssl rand -hex 8)
+
+    if [ -z "$REALITY_UUID_VAL" ] || [ -z "$REALITY_PRIVATE_KEY_VAL" ] || [ -z "$REALITY_PUBLIC_KEY_VAL" ] || [ -z "$LAST_REALITY_SHORT_ID" ]; then
+        error "生成 Reality凭证失败 (UUID, Key, 或 ShortID 在解析后为空)."
         return 1
     fi
     success "Reality 凭证生成成功。"
@@ -514,6 +517,7 @@ display_and_store_config_info() {
         echo -e "UUID: ${GREEN}${LAST_REALITY_UUID}${NC}"
         echo -e "SNI (伪装域名): ${GREEN}${LAST_REALITY_SNI}${NC}"
         echo -e "PublicKey: ${GREEN}${LAST_REALITY_PUBLIC_KEY}${NC}"
+        echo -e "ShortID: ${GREEN}${LAST_REALITY_SHORT_ID}${NC}"
         echo -e "${CYAN}VLESS Reality 导入链接:${NC} ${GREEN}${LAST_VLESS_LINK}${NC}"
 
         if $qrencode_is_ready && command -v qrencode &>/dev/null; then
@@ -694,7 +698,13 @@ manage_singbox() {
             fi
             systemctl "$action" sing-box
             if [[ "$action" != "status" ]]; then sleep 1; fi
-            systemctl is-active --quiet sing-box && success "操作成功" || warn "操作可能未成功或服务未运行"
+            if systemctl is-active --quiet sing-box; then
+                success "操作成功，服务正在运行。"
+            elif [[ "$action" == "stop" ]]; then
+                 success "操作成功，服务已停止。"
+            else
+                warn "操作可能未成功或服务未运行。"
+            fi
             ;;
         log)
             journalctl -u sing-box -f --no-pager -n 50
