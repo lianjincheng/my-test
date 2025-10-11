@@ -3,7 +3,7 @@
 # Script for Sing-Box Hysteria2 & Reality Management
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试"
+AUTHOR_NAME="singbox脚本测试ipv4"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -211,7 +211,8 @@ find_and_set_singbox_cmd() {
 
 
 get_server_ip() {
-    SERVER_IP=$(curl -s --max-time 5 ip.sb || curl -s --max-time 5 https://api.ipify.org || curl -s --max-time 5 https://checkip.amazonaws.com)
+    # Force IPv4 resolution
+    SERVER_IP=$(curl -s4 --max-time 5 ip.sb || curl -s4 --max-time 5 https://api.ipify.org || curl -s4 --max-time 5 https://checkip.amazonaws.com)
     if [ -z "$SERVER_IP" ]; then
         warn "无法自动获取服务器公网 IP。你可能需要手动配置客户端。"
         read -p "请输入你的服务器公网 IP (留空则尝试从hostname获取): " MANUAL_SERVER_IP
@@ -392,7 +393,7 @@ create_config_json() {
         {
             "type": "hysteria2",
             "tag": "hy2-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": ${hy2_port},
             "users": [
                 {
@@ -421,7 +422,7 @@ EOF
         {
             "type": "vless",
             "tag": "vless-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": ${reality_port},
             "users": [
                 {
