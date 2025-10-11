@@ -3,7 +3,7 @@
 # Script for Sing-Box Hysteria2 & Reality Management
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试ipv4 版本1.80"
+AUTHOR_NAME="singbox脚本测试ipv4"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -24,7 +24,7 @@ PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
 # 默认值
 DEFAULT_REALITY_PORT="443"
 DEFAULT_HYSTERIA_MASQUERADE_CN="bing.com"
-DEFAULT_REALITY_SNI="www.microsoft.com"
+DEFAULT_REALITY_SNI="www.tesla.com"
 
 # 全局 SINGBOX_CMD
 SINGBOX_CMD=""
@@ -60,6 +60,113 @@ info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+# ---
+# *** 这是本次的核心修改 ***
+# ---
+install_singbox_core() {
+    local target_version="v1.8.0"
+
+    # 检查是否已安装
+    if [ -f "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then
+        info "Sing-box 已检测到在 $SINGBOX_INSTALL_PATH_EXPECTED."
+        current_version=$("$SINGBOX_INSTALL_PATH_EXPECTED" version | awk '{print $3}' 2>/dev/null)
+        if [ -n "$current_version" ]; then
+            info "当前版本: $current_version"
+            if [[ "$current_version" == "$target_version" ]]; then
+                read -p "已安装目标版本 ($target_version)。是否仍然重新安装? (y/N): " reinstall_choice
+                if [[ ! "$reinstall_choice" =~ ^[Yy]$ ]]; then
+                    # 确保 SINGBOX_CMD 被设置，即使我们不安装
+                    find_and_set_singbox_cmd
+                    return 0
+                fi
+            else
+                warn "当前版本 ($current_version) 与目标版本 ($target_version) 不同。"
+                read -p "是否安装/覆盖为目标版本 $target_version? (y/N): " reinstall_choice
+                if [[ ! "$reinstall_choice" =~ ^[Yy]$ ]]; then
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    info "正在准备安装 Sing-box (指定版本: $target_version)..."
+
+    # 检测系统架构
+    local ARCH
+    case "$(uname -m)" in
+        x86_64)
+            ARCH="amd64"
+            ;;
+        aarch64)
+            ARCH="arm64"
+            ;;
+        armv7l)
+            ARCH="armv7"
+            ;;
+        *)
+            error "不支持的系统架构: $(uname -m)"
+            return 1
+            ;;
+    esac
+    info "检测到系统架构: $ARCH"
+
+    # 构建下载链接
+    local version_num=${target_version#v}
+    local download_url="https://github.com/SagerNet/sing-box/releases/download/${target_version}/sing-box-${version_num}-linux-${ARCH}.tar.gz"
+    
+    # 创建临时目录
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    if [ ! -d "$tmp_dir" ]; then
+        error "无法创建临时目录"
+        return 1
+    fi
+    
+    # 下载
+    info "正在从 GitHub Releases 下载: $download_url"
+    if ! curl -L -o "${tmp_dir}/sing-box.tar.gz" "$download_url"; then
+        error "下载失败。请检查网络或确认链接是否有效。"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    success "下载成功。"
+
+    # 解压
+    info "正在解压文件..."
+    if ! tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"; then
+        error "解压失败。"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # 安装
+    info "正在安装 sing-box 到 $SINGBOX_INSTALL_PATH_EXPECTED..."
+    # 找到解压后的文件夹内的 sing-box 可执行文件并安装
+    if ! install -m 755 "${tmp_dir}/sing-box-${version_num}-linux-${ARCH}/sing-box" "$SINGBOX_INSTALL_PATH_EXPECTED"; then
+        error "安装失败。请检查权限。"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    success "Sing-box 版本 $target_version 安装成功。"
+
+    # 清理
+    rm -rf "$tmp_dir"
+    
+    # 重新设置 SINGBOX_CMD 变量
+    find_and_set_singbox_cmd
+    if [ -z "$SINGBOX_CMD" ]; then
+        error "安装后仍无法找到 sing-box 命令。"
+        return 1
+    fi
+
+    return 0
+}
+
+# ---
+# [脚本的其余部分保持不变]
+# [从 print_author_info() 开始，一直到脚本末尾]
+# ---
 
 print_author_info() {
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
@@ -220,56 +327,6 @@ get_server_ip() {
 
 generate_random_password() {
     openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16
-}
-
-install_singbox_core() {
-    local target_version="v1.8.0" 
-
-    if [ -f "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then
-        info "Sing-box 已检测到在 $SINGBOX_INSTALL_PATH_EXPECTED."
-        find_and_set_singbox_cmd
-        if [ -n "$SINGBOX_CMD" ]; then
-            current_version=$($SINGBOX_CMD version | awk '{print $3}' 2>/dev/null)
-            if [ -n "$current_version" ]; then
-                info "当前版本: $current_version"
-                if [[ "$current_version" == "$target_version" ]]; then
-                    read -p "已安装目标版本 ($target_version)。是否仍然重新安装? (y/N): " reinstall_choice
-                    if [[ ! "$reinstall_choice" =~ ^[Yy]$ ]]; then
-                        return 0
-                    fi
-                else
-                    warn "当前版本 ($current_version) 与目标版本 ($target_version) 不同。"
-                    read -p "是否安装/覆盖为目标版本 $target_version? (y/N): " reinstall_choice
-                    if [[ ! "$reinstall_choice" =~ ^[Yy]$ ]]; then
-                        return 0
-                    fi
-                fi
-            fi
-        else
-            info "无法确定当前版本，因为 sing-box 命令未找到。"
-        fi
-    fi
-
-    info "正在安装/更新 Sing-box (指定版本: $target_version)..."
-    local install_script
-    install_script=$(curl -fsSL https://sing-box.vercel.app/)
-    if [ -z "$install_script" ]; then
-        error "无法从 https://sing-box.vercel.app/ 获取安装脚本，请检查网络。"
-        return 1
-    fi
-
-    if bash -c "$install_script" @ install --version "$target_version"; then
-        success "Sing-box 版本 $target_version 安装/更新成功。"
-        find_and_set_singbox_cmd
-        if [ -z "$SINGBOX_CMD" ]; then
-            error "安装后仍无法找到 sing-box 命令。请检查安装和 PATH。"
-            return 1
-        fi
-    else
-        error "Sing-box 安装失败。请检查来自官方安装器的错误信息。"
-        return 1
-    fi
-    return 0
 }
 
 generate_self_signed_cert() {
@@ -542,7 +599,6 @@ install_hysteria2_reality() {
     install_singbox_core || return 1
     get_server_ip
 
-    # *** 新增: 自动生成随机端口 ***
     info "正在为 Hysteria2 生成一个未被占用的随机端口..."
     while true; do
         random_port=$(shuf -i 10000-65535 -n 1)
@@ -581,7 +637,6 @@ install_hysteria2_only() {
     install_singbox_core || return 1
     get_server_ip
 
-    # *** 新增: 自动生成随机端口 ***
     info "正在为 Hysteria2 生成一个未被占用的随机端口..."
     while true; do
         random_port=$(shuf -i 10000-65535 -n 1)
@@ -743,9 +798,9 @@ manage_singbox() {
             ;;
         edit_config)
             if [ -f "$SINGBOX_CONFIG_FILE" ]; then
-                if command -v nano &>/dev/null; then
+                if command -v nano &> /dev/null; then
                     nano "$SINGBOX_CONFIG_FILE"
-                elif command -v vim &>/dev/null; then
+                elif command -v vim &> /dev/null; then
                     vim "$SINGBOX_CONFIG_FILE"
                 else
                     error "'nano' 或 'vim' 编辑器未安装。请手动编辑: ${SINGBOX_CONFIG_FILE}"
@@ -787,7 +842,7 @@ show_menu() {
     echo "  11. 显示上次保存的导入信息 (含二维码)"
     echo "------------------------------------------------"
     echo -e "${RED}${BOLD}其他选项:${NC}"
-    echo "  12. 更新/安装指定版本 Sing-box 内核"
+    echo "  12. 更新/安装指定版本 Sing-box 内核 (v1.8.0)"
     echo "  13. 卸载 Sing-box"
     echo "  0. 退出脚本"
     echo "================================================"
