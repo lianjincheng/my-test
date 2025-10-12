@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 & Reality Management (Final Version: 4-Node Dual-Policy, Max Compatibility)
+# Script for Sing-Box Hysteria2 & Reality Management (Final Version: Hardened Reality Ports)
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试ipv4最终版-4节点"
+AUTHOR_NAME="singbox脚本测试ipv4最终版-443/8443"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -22,7 +22,7 @@ HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
 
 # 默认值
-DEFAULT_HYSTERIA_MASQUERADE_CN="bing.com"
+DEFAULT_HYSTERIA_MASQUERADE_CN="www.bing.com"
 DEFAULT_REALITY_SNI="www.microsoft.com"
 
 # 全局 SINGBOX_CMD
@@ -156,7 +156,7 @@ attempt_install_package() {
 
 check_dependencies() {
     info "检查核心依赖..."
-    local core_deps=("curl" "openssl" "jq")
+    local core_deps=("curl" "openssl" "jq" "lsof")
     local all_deps_met=true
     for dep in "${core_deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
@@ -504,7 +504,7 @@ create_config_json() {
         "server_name": "${DEFAULT_REALITY_SNI}",
         "reality": {
           "enabled": true,
-          "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 },
+          "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 8443 },
           "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}",
           "short_id": "${REALITY_DIRECT_SHORT_ID}"
         }
@@ -618,9 +618,6 @@ start_singbox_service() {
     fi
 }
 
-# ---
-# *** 核心修改：全新的四节点信息显示函数 ***
-# ---
 display_and_store_config_info() {
     local qrencode_is_ready=false
     if check_and_prepare_qrencode; then
@@ -697,33 +694,45 @@ install_all_nodes() {
     install_singbox_core || return 1
     get_server_ip
 
-    # --- 批量生成凭证 ---
-    info "正在批量生成4个节点的独立凭证..."
+    # --- 端口占用检查 ---
+    info "正在检查 Reality 节点所需端口 (443, 8443)..."
+    if lsof -i:443 -sTCP:LISTEN >/dev/null ; then
+        error "端口 443 已被占用。请先停止占用该端口的程序 (如 Nginx, Caddy) 再运行本脚本。"
+        return 1
+    fi
+    if lsof -i:8443 -sTCP:LISTEN >/dev/null ; then
+        error "端口 8443 已被占用。请先停止占用该端口的程序再运行本脚本。"
+        return 1
+    fi
+    success "Reality 端口 (443, 8443) 可用。"
+    REALITY_SMART_PORT=443
+    REALITY_DIRECT_PORT=8443
+
+    # --- 批量生成 Hysteria 2 凭证和端口 ---
+    info "正在为2个 Hysteria2 节点生成独立凭证和随机端口..."
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
     success "已生成 2 套 Hysteria2 独立密码。"
 
+    local hy2_ports=()
+    while [ ${#hy2_ports[@]} -lt 2 ]; do
+        local random_port
+        random_port=$(shuf -i 10000-65535 -n 1)
+        if ! lsof -i:"$random_port" >/dev/null && ! [[ " ${hy2_ports[@]} " =~ " ${random_port} " ]]; then
+            hy2_ports+=("$random_port")
+        fi
+    done
+    HY2_SMART_PORT=${hy2_ports[0]}
+    HY2_DIRECT_PORT=${hy2_ports[1]}
+    success "已生成 2 个 Hysteria2 独立端口: ${hy2_ports[*]}"
+
+    # --- 批量生成 Reality 凭证 ---
+    info "正在为2个 Reality 节点生成独立凭证..."
     generate_single_reality_credentials REALITY_SMART_UUID REALITY_SMART_PRIVATE_KEY_FOR_CONFIG REALITY_SMART_PUBLIC_KEY REALITY_SMART_SHORT_ID || return 1
     generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID || return 1
     success "已生成 2 套 Reality 独立凭证 (UUID, KeyPair, ShortID)。"
 
-    # --- 批量生成端口 ---
-    info "正在批量生成4个节点的独立端口 (范围 10000-65535)..."
-    local ports=()
-    while [ ${#ports[@]} -lt 4 ]; do
-        local random_port
-        random_port=$(shuf -i 10000-65535 -n 1)
-        if ! ss -lun | grep -q -w ":${random_port}" && ! [[ " ${ports[@]} " =~ " ${random_port} " ]]; then
-            ports+=("$random_port")
-        fi
-    done
-    HY2_SMART_PORT=${ports[0]}
-    REALITY_SMART_PORT=${ports[1]}
-    HY2_DIRECT_PORT=${ports[2]}
-    REALITY_DIRECT_PORT=${ports[3]}
-    success "已生成 4 个独立端口: ${ports[*]}"
-
-    # --- 生成证书 ---
+    # --- 生成共享证书 ---
     info "正在处理 Hysteria2 共享证书..."
     generate_self_signed_cert "$DEFAULT_HYSTERIA_MASQUERADE_CN" || return 1
     
@@ -927,5 +936,5 @@ while true; do
     show_menu
     read -n 1 -s -r -p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
 done
-p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
+主菜单 (或按 Ctrl+C 退出)..."
 done
