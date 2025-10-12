@@ -538,7 +538,7 @@ display_and_store_config_info() {
 
     echo -e "----------------------------------------------------"
     if [[ "$mode" == "all" || "$mode" == "hysteria2" ]]; then
-        # *** 最终优化：为链接增加 MTU 参数以提升拥堵网络稳定性 ***
+        # *** 核心修改：为链接增加 MTU 参数以提升拥堵网络稳定性 ***
         LAST_HY2_LINK="hy2://${LAST_HY2_PASSWORD}@${LAST_SERVER_IP}:${LAST_HY2_PORT}?sni=${LAST_HY2_MASQUERADE_CN}&alpn=h3&insecure=1&mtu=1250#Hy2-${LAST_SERVER_IP}-$(date +%s)"
         echo -e "${GREEN}${BOLD} Hysteria2 配置信息:${NC}"
         echo -e "服务器地址: ${GREEN}${LAST_SERVER_IP}${NC}"
@@ -678,6 +678,7 @@ show_current_import_info() {
         return
     fi
     info "显示上次保存的配置信息 (${LAST_INSTALL_MODE}模式):"
+    # *** 核心修改：重新运行 display_and_store_config_info，以便使用最新的 MTU 链接 ***
     display_and_store_config_info "$LAST_INSTALL_MODE"
 }
 
