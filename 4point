@@ -3,7 +3,7 @@
 # Script for Sing-Box Hysteria2 & Reality Management (Final Version: 4-Node Dual-Policy, Max Compatibility)
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试ipv4最终版20251012"
+AUTHOR_NAME="singbox脚本测试ipv4最终版-4节点"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -618,6 +618,9 @@ start_singbox_service() {
     fi
 }
 
+# ---
+# *** 核心修改：全新的四节点信息显示函数 ***
+# ---
 display_and_store_config_info() {
     local qrencode_is_ready=false
     if check_and_prepare_qrencode; then
@@ -630,7 +633,7 @@ display_and_store_config_info() {
     echo -e "----------------------------------------------------"
     
     # Hysteria2 (Smart)
-    local HY2_SMART_LINK="hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1&mtu=1250#Hy2-Smart-${LAST_SERVER_IP}"
+    local HY2_SMART_LINK="hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1#Hy2-Smart-${LAST_SERVER_IP}"
     echo -e "${GREEN}${BOLD} [智能] Hysteria2 节点:${NC}"
     echo -e "端口: ${GREEN}${HY2_SMART_PORT}${NC}"
     echo -e "密码: ${GREEN}${HY2_SMART_PASSWORD}${NC}"
@@ -659,7 +662,7 @@ display_and_store_config_info() {
     echo -e "----------------------------------------------------"
 
     # Hysteria2 (Direct)
-    local HY2_DIRECT_LINK="hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1&mtu=1250#Hy2-Direct-${LAST_SERVER_IP}"
+    local HY2_DIRECT_LINK="hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1#Hy2-Direct-${LAST_SERVER_IP}"
     echo -e "${GREEN}${BOLD} [直连] Hysteria2 节点:${NC}"
     echo -e "端口: ${GREEN}${HY2_DIRECT_PORT}${NC}"
     echo -e "密码: ${GREEN}${HY2_DIRECT_PASSWORD}${NC}"
@@ -733,19 +736,6 @@ install_all_nodes() {
 
     success "四节点双策略配置部署完成！"
     display_and_store_config_info
-}
-
-# --- 旧安装函数的占位符 (可选，为保持菜单兼容性) ---
-install_hysteria2_reality() {
-    install_all_nodes
-}
-install_hysteria2_only() {
-    warn "此选项已弃用。请使用选项1进行完整的四节点部署。"
-    info "如果仍需单独安装，请手动编辑脚本。"
-}
-install_reality_only() {
-    warn "此选项已弃用。请使用选项1进行完整的四节点部署。"
-    info "如果仍需单独安装，请手动编辑脚本。"
 }
 
 show_current_import_info() {
@@ -890,41 +880,38 @@ show_menu() {
 
     echo -e "${GREEN}${BOLD}安装选项:${NC}"
     echo "  1. 安装/重置 四节点双策略配置"
-    echo "  2. (已弃用) 单独安装 Hysteria2"
-    echo "  3. (已弃用) 单独安装 Reality (VLESS)"
     echo "------------------------------------------------"
     echo -e "${YELLOW}${BOLD}管理选项:${NC}"
-    echo "  4. 启动 Sing-box 服务"
-    echo "  5. 停止 Sing-box 服务"
-    echo "  6. 重启 Sing-box 服务"
-    echo "  7. 查看 Sing-box 服务状态"
-    echo "  8. 查看 Sing-box 实时日志"
-    echo "  9. 查看当前配置文件 (格式化输出)"
-    echo "  10. 编辑当前配置文件 (nano/vim)"
-    echo "  11. 显示所有节点导入信息 (含二维码)"
+    echo "  2. 启动 Sing-box 服务"
+    echo "  3. 停止 Sing-box 服务"
+    echo "  4. 重启 Sing-box 服务"
+    echo "  5. 查看 Sing-box 服务状态"
+    echo "  6. 查看 Sing-box 实时日志"
+    echo "  7. 查看当前配置文件 (格式化输出)"
+    echo "  8. 编辑当前配置文件 (nano/vim)"
+    echo "  9. 显示所有节点导入信息 (含二维码)"
     echo "------------------------------------------------"
     echo -e "${RED}${BOLD}其他选项:${NC}"
-    echo "  12. 检查/安装 Sing-box 内核 (v1.8.0)"
-    echo "  13. 卸载 Sing-box"
+    echo "  10. 检查/安装 Sing-box 内核 (v1.8.0)"
+    echo "  11. 卸载 Sing-box"
     echo "  0. 退出脚本"
     echo "================================================"
-    read -p "请输入选项 [0-13]: " choice
+    read -p "请输入选项 [0-11]: " choice
 
     case "$choice" in
         1) install_all_nodes ;;
-        2|3) warn "此选项已弃用。请使用选项1进行部署。" ;;
-        4) manage_singbox "start" ;;
-        5) manage_singbox "stop" ;;
-        6) manage_singbox "restart" ;;
-        7) manage_singbox "status" ;;
-        8) manage_singbox "log" ;;
-        9) manage_singbox "view_config" ;;
-        10) manage_singbox "edit_config" ;;
-        11) show_current_import_info ;;
-        12) install_singbox_core && manage_singbox "restart" ;;
-        13) uninstall_singbox ;;
+        2) manage_singbox "start" ;;
+        3) manage_singbox "stop" ;;
+        4) manage_singbox "restart" ;;
+        5) manage_singbox "status" ;;
+        6) manage_singbox "log" ;;
+        7) manage_singbox "view_config" ;;
+        8) manage_singbox "edit_config" ;;
+        9) show_current_import_info ;;
+        10) install_singbox_core && manage_singbox "restart" ;;
+        11) uninstall_singbox ;;
         0) exit 0 ;;
-        *) error "无效选项，请输入 0 到 13 之间的数字。" ;;
+        *) error "无效选项，请输入 0 到 11 之间的数字。" ;;
     esac
     echo
 }
@@ -940,5 +927,5 @@ while true; do
     show_menu
     read -n 1 -s -r -p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
 done
-主菜单 (或按 Ctrl+C 退出)..."
+p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
 done
