@@ -1,12 +1,54 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 & Reality Management (Final Version: 3-Node Hybrid-Policy)
+# Script for Sing-Box Hysteria2 & Reality Management (Final Version: Self-installing 3-Node Hybrid-Policy)
 
 # --- Author Information ---
 AUTHOR_NAME="singbox脚本测试ipv4最终版-3节点"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
+
+# --- Self-Installation & Bootstrapping Logic ---
+SCRIPT_URL="https://raw.githubusercontent.com/lianjincheng/singbox-test/main/4point" # 请确保这个链接指向您最终的脚本
+INSTALL_PATH="$HOME/sb.sh"
+ALIAS_CMD="sb"
+
+if [[ "$0" != /* ]] && [[ "$0" != ~* ]]; then
+    # This check is a simple way to guess if the script is run via curl | bash
+    # A more robust check might be needed depending on the exact execution method.
+    echo -e "\033[0;32m检测到首次运行，正在为您安装脚本到本地...\033[0m"
+    
+    # Step 1: Download the script to a stable location
+    echo -e "\033[0;34m[INFO]\033[0m 正在下载脚本到 ${INSTALL_PATH}..."
+    if curl -sSL -o "$INSTALL_PATH" "$SCRIPT_URL"; then
+        chmod +x "$INSTALL_PATH"
+        echo -e "\033[0;32m[SUCCESS]\033[0m 脚本已成功下载并设置为可执行。"
+    else
+        echo -e "\033[0;31m[ERROR]\033[0m 脚本下载失败，请检查网络和链接: ${SCRIPT_URL}"
+        exit 1
+    fi
+
+    # Step 2: Create a permanent alias
+    if ! grep -q "alias ${ALIAS_CMD}=" "$HOME/.bashrc"; then
+        echo -e "\033[0;34m[INFO]\033[0m 正在创建快捷命令 '${ALIAS_CMD}'..."
+        echo "" >> "$HOME/.bashrc"
+        echo "# Alias for Sing-box management script" >> "$HOME/.bashrc"
+        echo "alias ${ALIAS_CMD}='sudo ${INSTALL_PATH}'" >> "$HOME/.bashrc"
+        echo -e "\033[0;32m[SUCCESS]\033[0m 快捷命令 '${ALIAS_CMD}' 已创建。"
+    else
+        echo -e "\033[1;33m[WARN]\033[0m 快捷命令 '${ALIAS_CMD}' 已存在，跳过创建。"
+    fi
+
+    echo ""
+    echo -e "\033[0;32m🎉 安装完成！\033[0m"
+    echo -e "请务必执行以下命令，或重新登录SSH，以使快捷命令生效:"
+    echo -e "\033[0;36m    source ~/.bashrc\033[0m"
+    echo -e "之后，您就可以随时使用 '${GREEN}${ALIAS_CMD}${NC}' 命令来管理您的服务了。"
+    
+    # Exit gracefully after installation
+    exit 0
+fi
+# --- End of Bootstrapping Logic ---
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -22,7 +64,7 @@ HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
 
 # 默认值
-DEFAULT_HYSTERIA_MASQUERADE_CN="www.bing.com"
+DEFAULT_HYSTERIA_MASQUERADE_CN="bing.com"
 DEFAULT_REALITY_SNI="www.microsoft.com"
 
 # 全局 SINGBOX_CMD
