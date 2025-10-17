@@ -55,7 +55,6 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_keepalive_time = 600
 net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_keepalive_intvl = 30
-net.ipv4.tcp_notsent_lowat = 16384
 
 # Further reduce latency and improve responsiveness
 net.ipv4.tcp_notsent_lowat = 524288
@@ -64,8 +63,8 @@ net.ipv4.tcp_sack = 1
 net.ipv4.tcp_fack = 1
 
 # Memory management fine-tuning
-vm.dirty_ratio = 10                  # (借鉴思路，但更保守) 可以设置一个较低的值，让磁盘写入更平滑
-vm.dirty_background_ratio = 5        # (借鉴思路，但更保守)
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
 
 
 # TCP Congestion Control (BBR)
