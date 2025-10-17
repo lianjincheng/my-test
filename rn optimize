@@ -66,11 +66,6 @@ net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_fack = 1
 
-# Memory management fine-tuning
-# vm.dirty_ratio = 10
-# vm.dirty_background_ratio = 5
-
-
 # TCP Congestion Control (BBR)
 net.ipv4.tcp_congestion_control = bbr
 net.core.default_qdisc = fq
