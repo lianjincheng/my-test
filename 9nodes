@@ -608,7 +608,7 @@ create_config_json() {
       { "inbound": ["hy2-smart", "tuic-smart", "reality-tcp-smart", "reality-http-smart"], "geoip": [ "CN" ], "outbound": "direct" },
       {
         "inbound": ["hy2-smart", "tuic-smart", "reality-tcp-smart", "reality-http-smart"],
-        "domain_suffix": [ "netflix.com", "nflxvideo.net", "openai.com" ],
+        "domain_suffix": [ "netflix.com", "nflxvideo.net" ],
         "outbound": "warp-out"
       }
     ],
