@@ -87,6 +87,28 @@ kernel.sched_autogroup_enabled = 0
 net.ipv4.tcp_adv_win_scale = 2 
 net.ipv4.tcp_moderate_rcvbuf = 1
 
+# --- Cherry-picked stability & security enhancements ---
+# Kernel's emergency memory reserve to prevent lockups
+vm.min_free_kbytes = 65536 # Using a safe 64MB value
+
+# Increase capacity for closing/closed connections
+net.ipv4.tcp_max_tw_buckets = 32768
+net.ipv4.tcp_max_orphans = 32768
+
+# Fine-tune route and neighbor cache garbage collection
+net.ipv4.route.gc_timeout = 100
+net.ipv4.neigh.default.gc_stale_time = 120
+
+# Harden networking against common attacks
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.arp_announce = 2
+net.ipv4.conf.default.arp_announce = 2
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.default.arp_ignore = 1
+
 # Disable IPv6 via sysctl
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
