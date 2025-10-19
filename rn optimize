@@ -75,6 +75,18 @@ fs.file-max = 1048576
 fs.nr_open = 1048576
 vm.swappiness = 10
 
+# --- Cherry-picked from the new config ---
+# Enable MTU probing to optimize packet size
+net.ipv4.tcp_mtu_probing = 1
+
+# Disable features for multi-user desktop environments to reduce overhead
+kernel.numa_balancing = 0
+kernel.sched_autogroup_enabled = 0
+
+# Fine-tune TCP window scaling for high BDP networks
+net.ipv4.tcp_adv_win_scale = 2 
+net.ipv4.tcp_moderate_rcvbuf = 1
+
 # Disable IPv6 via sysctl
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
