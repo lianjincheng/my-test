@@ -593,7 +593,7 @@ create_config_json() {
     {
       "type": "wireguard", "tag": "warp-out", "local_address": ["${WARP_ADDRESS}"],
       "private_key": "${WARP_PRIVATE_KEY}", "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
-      "server": "162.159.192.1", "server_port": 2408, "mtu": 1500, "reserved": ${WARP_RESERVED},
+      "server": "162.159.192.1", "server_port": 2408, "mtu": 1420, "reserved": ${WARP_RESERVED},
       "domain_strategy": "ipv4_only"
     },
     { "type": "dns", "tag": "dns-out" },
