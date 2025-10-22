@@ -489,7 +489,7 @@ create_config_json() {
       "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
       "server": "162.159.192.1",
       "server_port": 2408,
-      "mtu": 1500,
+      "mtu": 1420,
       "reserved": [ 0, 0, 0 ],
       "domain_strategy": "ipv4_only"
     },
