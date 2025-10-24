@@ -514,10 +514,7 @@ create_config_json() {
       },
       {
         "inbound": ["hy2-smart", "reality-smart"],
-        "domain_suffix": [
-          "netflix.com",
-          "nflxvideo.net"
-        ],
+        "domain_suffix": [],
         "outbound": "warp-out"
       }
     ],
