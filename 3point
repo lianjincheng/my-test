@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 & Reality Management (Final Version: 3-Node Hybrid-Policy)
+# Script for Sing-Box Hysteria2 & Reality Management (Final Version: 3-Node Hybrid-Policy with Upgraded WARP)
 
 # --- Author Information ---
 AUTHOR_NAME="singbox脚本测试ipv4最终版"
@@ -18,7 +18,6 @@ HYSTERIA_CERT_DIR="/etc/hysteria" # 针对自签名证书
 HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
 HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 
-# 用于持久存储上次配置信息的文件
 PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
 
 # 默认值
@@ -28,7 +27,7 @@ DEFAULT_REALITY_SNI="www.microsoft.com"
 # 全局 SINGBOX_CMD
 SINGBOX_CMD=""
 
-# --- 全局变量，用于存储三节点信息 ---
+# --- 全局变量 ---
 LAST_SERVER_IP=""
 # 智能分流组
 HY2_SMART_PORT=""
@@ -41,6 +40,11 @@ REALITY_SMART_SHORT_ID=""
 # 全局直连组
 HY2_DIRECT_PORT=""
 HY2_DIRECT_PASSWORD=""
+# WARP 配置
+WARP_PRIVATE_KEY=""
+WARP_PEER_PUBLIC_KEY=""
+WARP_ADDRESS=""
+WARP_RESERVED=""
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
@@ -93,6 +97,10 @@ REALITY_SMART_PUBLIC_KEY="${REALITY_SMART_PUBLIC_KEY}"
 REALITY_SMART_SHORT_ID="${REALITY_SMART_SHORT_ID}"
 HY2_DIRECT_PORT="${HY2_DIRECT_PORT}"
 HY2_DIRECT_PASSWORD="${HY2_DIRECT_PASSWORD}"
+WARP_PRIVATE_KEY="${WARP_PRIVATE_KEY}"
+WARP_PEER_PUBLIC_KEY="${WARP_PEER_PUBLIC_KEY}"
+WARP_ADDRESS="${WARP_ADDRESS}"
+WARP_RESERVED="${WARP_RESERVED}"
 EOF
     if [ $? -eq 0 ]; then
         success "配置信息保存成功。"
@@ -194,7 +202,6 @@ find_and_set_singbox_cmd() {
 
 
 get_server_ip() {
-    # Force IPv4 resolution
     SERVER_IP=$(curl -s4 --max-time 5 ip.sb || curl -s4 --max-time 5 https://api.ipify.org || curl -s4 --max-time 5 https://checkip.amazonaws.com)
     if [ -z "$SERVER_IP" ]; then
         warn "无法自动获取服务器公网 IP。你可能需要手动配置客户端。"
@@ -244,19 +251,10 @@ install_singbox_core() {
 
     local ARCH
     case "$(uname -m)" in
-        x86_64)
-            ARCH="amd64"
-            ;;
-        aarch64)
-            ARCH="arm64"
-            ;;
-        armv7l)
-            ARCH="armv7"
-            ;;
-        *)
-            error "不支持的系统架构: $(uname -m)"
-            return 1
-            ;;
+        x86_64) ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        armv7l) ARCH="armv7" ;;
+        *) error "不支持的系统架构: $(uname -m)"; return 1 ;;
     esac
     info "检测到系统架构: $ARCH"
 
@@ -305,6 +303,64 @@ install_singbox_core() {
     fi
 
     return 0
+}
+
+# --- [心脏移植手术] ---
+# 全新的、更可靠的 WARP 配置函数
+setup_warp() {
+    info "正在配置 WARP 出站 (使用更可靠的手动API注册方法)..."
+
+    # 步骤 1: 确保依赖项已安装 (wireguard-tools & jq)
+    info "步骤 1/4: 检查核心依赖: wireguard-tools, jq..."
+    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
+        apt-get update -y
+        apt-get install -y wireguard-tools jq
+    fi
+    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
+        error "依赖项 'wireguard-tools' 或 'jq' 安装失败。无法继续配置WARP。"
+        return 1
+    fi
+
+    # 步骤 2: 生成全新的密钥对
+    info "步骤 2/4: 生成全新的WireGuard密钥对..."
+    local PRIVATE_KEY=$(wg genkey)
+    local PUBLIC_KEY=$(echo "${PRIVATE_KEY}" | wg pubkey)
+    if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
+        error "生成WireGuard密钥失败。"
+        return 1
+    fi
+    success "新密钥对生成成功。"
+
+    # 步骤 3: 手动通过 cURL 向 Cloudflare API 发起注册请求
+    info "步骤 3/4: 正在通过API手动注册新的WARP账户..."
+    local RESPONSE
+    RESPONSE=$(curl -s -X POST \
+         -H "Content-Type: application/json" \
+         -H "Accept: application/json" \
+         -H "User-Agent: okhttp/3.12.1" \
+         --data "{\"public_key\":\"${PUBLIC_KEY}\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")\",\"key\":\"${PUBLIC_KEY}\",\"locale\":\"en_US\",\"type\":\"Android\",\"model\":\"PC\"}" \
+         "https://api.cloudflareclient.com/v0a2158/reg")
+
+    # 步骤 4: 解析API响应并设置全局变量
+    if [ -n "$RESPONSE" ] && echo "$RESPONSE" | jq -e 'has("config")' > /dev/null; then
+        info "步骤 4/4: API注册成功，正在解析配置..."
+        WARP_PRIVATE_KEY="$PRIVATE_KEY"
+        WARP_PEER_PUBLIC_KEY=$(echo "$RESPONSE" | jq -r '.config.peers[0].public_key')
+        WARP_ADDRESS=$(echo "$RESPONSE" | jq -r '.config.interface.addresses.v4')
+        WARP_RESERVED="[0,0,0]"
+        
+        if [ -z "$WARP_PEER_PUBLIC_KEY" ] || [ "$WARP_PEER_PUBLIC_KEY" == "null" ] || [ -z "$WARP_ADDRESS" ] || [ "$WARP_ADDRESS" == "null" ]; then
+            error "从API响应中解析配置失败。响应内容: $RESPONSE"
+            return 1
+        fi
+        success "WARP配置已成功获取并设置！"
+        save_persistent_info
+        return 0
+    else
+        error "WARP API注册失败。服务器可能无法连接到Cloudflare API或IP信誉不佳。"
+        warn "API响应: $RESPONSE"
+        return 1
+    fi
 }
 
 generate_self_signed_cert() {
@@ -384,113 +440,60 @@ create_config_json() {
 
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
+  "log": { "level": "info", "timestamp": true },
   "dns": {
-    "independent_cache": true,
-    "strategy": "ipv4_only",
-    "final": "cloudflare",
+    "independent_cache": true, "strategy": "ipv4_only", "final": "cloudflare",
     "servers": [
-      {
-        "tag": "cloudflare",
-        "address": "https://1.1.1.1/dns-query",
-        "detour": "direct"
-      },
-      {
-        "tag": "google",
-        "address": "https://8.8.8.8/dns-query",
-        "detour": "direct"
-      },
-      {
-        "tag": "alidns",
-        "address": "https://223.5.5.5/dns-query",
-        "detour": "direct"
-      }
+      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
+      { "tag": "google", "address": "https://8.8.8.8/dns-query", "detour": "direct" },
+      { "tag": "alidns", "address": "https://223.5.5.5/dns-query", "detour": "direct" }
     ],
     "rules": [
-      {
-        "outbound": "any",
-        "server": "cloudflare"
-      },
-      {
-        "outbound": "any",
-        "server": "google"
-      },
-      {
-        "outbound": "any",
-        "server": "alidns"
-      }
+      { "outbound": "any", "server": "cloudflare" },
+      { "outbound": "any", "server": "google" },
+      { "outbound": "any", "server": "alidns" }
     ]
   },
   "inbounds": [
     {
-      "type": "hysteria2",
-      "tag": "hy2-smart",
-      "listen": "0.0.0.0",
-      "listen_port": ${HY2_SMART_PORT},
-      "up_mbps": 0,
-      "down_mbps": 0,
+      "type": "hysteria2", "tag": "hy2-smart", "listen": "0.0.0.0", "listen_port": ${HY2_SMART_PORT},
+      "up_mbps": 0, "down_mbps": 0,
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": {
-        "enabled": true,
-        "server_name": "${DEFAULT_HYSTERIA_MASQUERADE_CN}",
+        "enabled": true, "server_name": "${DEFAULT_HYSTERIA_MASQUERADE_CN}",
         "alpn": [ "h2", "http/1.1", "h3" ],
-        "certificate_path": "${HYSTERIA_CERT_PEM}",
-        "key_path": "${HYSTERIA_CERT_KEY}"
+        "certificate_path": "${HYSTERIA_CERT_PEM}", "key_path": "${HYSTERIA_CERT_KEY}"
       }
     },
     {
-      "type": "vless",
-      "tag": "reality-smart",
-      "listen": "0.0.0.0",
-      "listen_port": ${REALITY_SMART_PORT},
-      "users": [
-        {
-          "uuid": "${REALITY_SMART_UUID}",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
+      "type": "vless", "tag": "reality-smart", "listen": "0.0.0.0", "listen_port": ${REALITY_SMART_PORT},
+      "users": [ { "uuid": "${REALITY_SMART_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
-        "enabled": true,
-        "server_name": "${DEFAULT_REALITY_SNI}",
+        "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
         "reality": {
-          "enabled": true,
-          "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 },
-          "private_key": "${REALITY_SMART_PRIVATE_KEY_FOR_CONFIG}",
-          "short_id": "${REALITY_SMART_SHORT_ID}"
+          "enabled": true, "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 },
+          "private_key": "${REALITY_SMART_PRIVATE_KEY_FOR_CONFIG}", "short_id": "${REALITY_SMART_SHORT_ID}"
         }
       }
     },
     {
-      "type": "hysteria2",
-      "tag": "hy2-direct",
-      "listen": "0.0.0.0",
-      "listen_port": ${HY2_DIRECT_PORT},
-      "up_mbps": 0,
-      "down_mbps": 0,
+      "type": "hysteria2", "tag": "hy2-direct", "listen": "0.0.0.0", "listen_port": ${HY2_DIRECT_PORT},
+      "up_mbps": 0, "down_mbps": 0,
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": {
-        "enabled": true,
-        "server_name": "${DEFAULT_HYSTERIA_MASQUERADE_CN}",
+        "enabled": true, "server_name": "${DEFAULT_HYSTERIA_MASQUERADE_CN}",
         "alpn": [ "h2", "http/1.1", "h3" ],
-        "certificate_path": "${HYSTERIA_CERT_PEM}",
-        "key_path": "${HYSTERIA_CERT_KEY}"
+        "certificate_path": "${HYSTERIA_CERT_PEM}", "key_path": "${HYSTERIA_CERT_KEY}"
       }
     }
   ],
   "outbounds": [
     {
-      "type": "wireguard",
-      "tag": "warp-out",
-      "local_address": [ "172.16.0.2/32" ],
-      "private_key": "EF1qP56+ya8ZO+fLm4vZxYKFz9IanLpJg2Pm6veF2lQ=",
-      "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-      "server": "162.159.192.1",
-      "server_port": 2408,
-      "mtu": 1420,
-      "reserved": [ 0, 0, 0 ],
+      "type": "wireguard", "tag": "warp-out",
+      "local_address": [ "${WARP_ADDRESS}/32" ],
+      "private_key": "${WARP_PRIVATE_KEY}",
+      "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
+      "server": "162.159.192.1", "server_port": 2408, "mtu": 1420, "reserved": ${WARP_RESERVED},
       "domain_strategy": "ipv4_only"
     },
     { "type": "dns", "tag": "dns-out" },
@@ -499,14 +502,8 @@ create_config_json() {
   ],
   "route": {
     "rules": [
-      {
-        "protocol": "dns",
-        "outbound": "dns-out"
-      },
-      {
-        "inbound": ["hy2-direct"],
-        "outbound": "direct"
-      },
+      { "protocol": "dns", "outbound": "dns-out" },
+      { "inbound": ["hy2-direct"], "outbound": "direct" },
       {
         "inbound": ["hy2-smart", "reality-smart"],
         "geoip": [ "CN" ],
@@ -591,50 +588,36 @@ display_and_store_config_info() {
         qrencode_is_ready=true
     fi
 
-    # --- 智能分流组 ---
     echo -e "${MAGENTA}${BOLD}================== 智能分流组 (Smart Policy) ==================${NC}"
-    info "访问 Netflix/OpenAI 等域名时走WARP，其他流量直连。"
+    info "访问特定域名时走WARP，其他流量直连。"
     echo -e "----------------------------------------------------"
     
-    # Hysteria2 (Smart)
     local HY2_SMART_LINK="hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1#Hy2-Smart-${LAST_SERVER_IP}"
     echo -e "${GREEN}${BOLD} [智能] Hysteria2 节点:${NC}"
     echo -e "端口: ${GREEN}${HY2_SMART_PORT}${NC}"
     echo -e "密码: ${GREEN}${HY2_SMART_PASSWORD}${NC}"
     echo -e "${CYAN}导入链接:${NC} ${GREEN}${HY2_SMART_LINK}${NC}"
-    if $qrencode_is_ready && command -v qrencode &>/dev/null; then
-        echo "二维码:"
-        qrencode -t ANSIUTF8 "${HY2_SMART_LINK}"
-    fi
+    if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${HY2_SMART_LINK}"; fi
     echo -e "----------------------------------------------------"
 
-    # Reality (Smart)
     local REALITY_SMART_LINK="vless://${REALITY_SMART_UUID}@${LAST_SERVER_IP}:${REALITY_SMART_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${REALITY_SMART_PUBLIC_KEY}&sid=${REALITY_SMART_SHORT_ID}&flow=xtls-rprx-vision&type=tcp#Reality-Smart-${LAST_SERVER_IP}"
     echo -e "${GREEN}${BOLD} [智能] Reality 节点:${NC}"
     echo -e "端口: ${GREEN}${REALITY_SMART_PORT}${NC}"
     echo -e "UUID: ${GREEN}${REALITY_SMART_UUID}${NC}"
     echo -e "${CYAN}导入链接:${NC} ${GREEN}${REALITY_SMART_LINK}${NC}"
-    if $qrencode_is_ready && command -v qrencode &>/dev/null; then
-        echo "二维码:"
-        qrencode -t ANSIUTF8 "${REALITY_SMART_LINK}"
-    fi
+    if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${REALITY_SMART_LINK}"; fi
     
-    # --- 全局直连组 ---
     echo
     echo -e "${MAGENTA}${BOLD}================== 全局直连组 (Direct-Only) ==================${NC}"
-    info "所有流量强制直连，适用于测试网络或访问无需解锁的网站。"
+    info "所有流量强制直连，适用于测试网络。"
     echo -e "----------------------------------------------------"
 
-    # Hysteria2 (Direct)
     local HY2_DIRECT_LINK="hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1#Hy2-Direct-${LAST_SERVER_IP}"
     echo -e "${GREEN}${BOLD} [直连] Hysteria2 节点:${NC}"
     echo -e "端口: ${GREEN}${HY2_DIRECT_PORT}${NC}"
     echo -e "密码: ${GREEN}${HY2_DIRECT_PASSWORD}${NC}"
     echo -e "${CYAN}导入链接:${NC} ${GREEN}${HY2_DIRECT_LINK}${NC}"
-    if $qrencode_is_ready && command -v qrencode &>/dev/null; then
-        echo "二维码:"
-        qrencode -t ANSIUTF8 "${HY2_DIRECT_LINK}"
-    fi
+    if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${HY2_DIRECT_LINK}"; fi
     echo -e "================================================================"
 
     save_persistent_info
@@ -644,8 +627,8 @@ install_all_nodes() {
     info "开始部署三节点混合策略配置..."
     install_singbox_core || return 1
     get_server_ip
+    setup_warp || return 1 # 调用新的WARP函数
 
-    # --- 端口占用检查 ---
     info "正在检查 Reality 节点所需端口 (443)..."
     if lsof -i:443 -sTCP:LISTEN >/dev/null ; then
         error "端口 443 已被占用。请先停止占用该端口的程序 (如 Nginx, Caddy) 再运行本脚本。"
@@ -654,7 +637,6 @@ install_all_nodes() {
     success "Reality 端口 (443) 可用。"
     REALITY_SMART_PORT=443
 
-    # --- 批量生成 Hysteria 2 凭证和端口 ---
     info "正在为2个 Hysteria2 节点生成独立凭证和随机端口..."
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
@@ -662,8 +644,7 @@ install_all_nodes() {
 
     local hy2_ports=()
     while [ ${#hy2_ports[@]} -lt 2 ]; do
-        local random_port
-        random_port=$(shuf -i 10000-65535 -n 1)
+        local random_port=$(shuf -i 10000-65535 -n 1)
         if ! lsof -i:"$random_port" >/dev/null && ! [[ " ${hy2_ports[@]} " =~ " ${random_port} " ]]; then
             hy2_ports+=("$random_port")
         fi
@@ -672,19 +653,15 @@ install_all_nodes() {
     HY2_DIRECT_PORT=${hy2_ports[1]}
     success "已生成 2 个 Hysteria2 独立端口: ${hy2_ports[*]}"
 
-    # --- 生成 Reality 凭证 ---
     info "正在为 Reality 节点生成独立凭证..."
     generate_single_reality_credentials REALITY_SMART_UUID REALITY_SMART_PRIVATE_KEY_FOR_CONFIG REALITY_SMART_PUBLIC_KEY REALITY_SMART_SHORT_ID || return 1
     success "已生成 1 套 Reality 独立凭证 (UUID, KeyPair, ShortID)。"
 
-    # --- 生成共享证书 ---
     info "正在处理 Hysteria2 共享证书..."
     generate_self_signed_cert "$DEFAULT_HYSTERIA_MASQUERADE_CN" || return 1
     
-    # --- 生成配置文件 ---
     create_config_json || return 1
     
-    # --- 启动服务 ---
     create_systemd_service
     start_singbox_service || return 1
 
@@ -749,12 +726,12 @@ uninstall_singbox() {
     fi
 
     success "Sing-box 卸载完成。"
+    # 清理内存中的变量，避免在当前会话中意外使用
     HY2_SMART_PORT="" HY2_SMART_PASSWORD="" REALITY_SMART_PORT="" REALITY_SMART_UUID="" REALITY_SMART_PUBLIC_KEY="" REALITY_SMART_SHORT_ID=""
     HY2_DIRECT_PORT="" HY2_DIRECT_PASSWORD=""
     rm -f "$PERSISTENT_INFO_FILE"
 }
 
-# --- 管理函数 ---
 manage_singbox() {
     local action=$1
     find_and_set_singbox_cmd
@@ -824,8 +801,6 @@ manage_singbox() {
     esac
 }
 
-
-# --- 主菜单 ---
 show_menu() {
     clear 
     print_author_info
@@ -874,10 +849,7 @@ check_dependencies
 find_and_set_singbox_cmd
 load_persistent_info
 
-# 主循环
 while true; do
     show_menu
     read -n 1 -s -r -p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
-done
-r -p "按任意键返回主菜单 (或按 Ctrl+C 退出)..."
 done
