@@ -17,7 +17,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 check_root() { if [ "$(id -u)" -ne 0 ]; then error "此脚本需要以 root 权限运行。请使用 'sudo bash $0' 或切换到 root 用户。"; fi; }
-update_and_install() { info "正在更新软件包列表并安装必要的依赖..."; apt update >/dev/null 2>&1; if apt install -y curl socat jq sudo coreutils grep sed >/dev/null 2>&1; then success "依赖项安装完成。"; else error "依赖项安装失败，请检查 apt 源或网络连接。"; fi; }
+update_and_install() { info "正在更新软件包列表并安装必要的依赖..."; apt update >/dev/null 2>&1; if apt install -y curl socat jq sudo coreutils grep sed boringtun wireguard-tools >/dev/null 2>&1; then success "依赖项安装完成。"; else error "依赖项安装失败，请检查 apt 源或网络连接。"; fi; }
 load_kernel_modules() { info "正在检查并加载优化所需的内核模块..."; local modules=("tcp_bbr" "sch_fq" "nf_conntrack"); local modules_conf="/etc/modules-load.d/proxy-optimizations.conf"; touch "$modules_conf"; for module in "${modules[@]}"; do local check_name=${module#sch_}; if lsmod | grep -q "^$check_name"; then info "模块 '$module' 已加载。"; else info "正在尝试加载模块 '$module'..."; if modprobe "$module"; then success "模块 '$module' 加载成功。"; else warn "模块 '$module' 加载失败。您的 VPS 可能不支持此模块 (例如 OpenVZ 架构)。"; continue; fi; fi; if ! grep -q "^$module$" "$modules_conf"; then echo "$module" >> "$modules_conf"; info "已将模块 '$module' 添加到开机自启列表。"; fi; done; success "内核模块检查和配置完成。"; }
 
 # ---
