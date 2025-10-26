@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script for Sing-Box Ultimate Management (Final Version: v1.4 - Upgraded WARP Engine)
+# Script for Sing-Box Ultimate Management (Final Version: v1.6 - Final Bug Fixes)
 
 # --- Author Information ---
 AUTHOR_NAME="singbox脚本测试ipv4最终版-终极版"
@@ -131,47 +131,48 @@ check_root() {
 }
 
 bootstrap_dependencies() {
-    info "开始检查并安装核心依赖..."
+    info "开始检查并安装所有必需的依赖..."
+    local core_deps=("curl" "tar" "jq" "openssl" "lsof" "ufw")
+    local warp_deps=("wireguard-tools" "jq")
+    local optional_deps=("qrencode")
+    local all_deps=("${core_deps[@]}" "${warp_deps[@]}" "${optional_deps[@]}")
+    local unique_deps=($(echo "${all_deps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
     local pkgs_to_install=()
-    
-    for pkg in curl tar jq openssl lsof ufw; do
-        if ! command -v "$pkg" &>/dev/null; then
-            pkgs_to_install+=("$pkg")
-        fi
+    for pkg in "${unique_deps[@]}"; do
+        local check_cmd="$pkg"
+        if [[ "$pkg" == "wireguard-tools" ]]; then check_cmd="wg"; fi
+        if ! command -v "$check_cmd" &>/dev/null; then pkgs_to_install+=("$pkg"); fi
     done
-    
-    if [ ${#pkgs_to_install[@]} -gt 0 ]; then
-        info "正在安装缺失的依赖: ${pkgs_to_install[*]}"
-        if command -v apt-get &>/dev/null; then
-            apt-get update -y && apt-get install -y "${pkgs_to_install[@]}"
-        elif command -v yum &>/dev/null; then
-            yum install -y "${pkgs_to_install[@]}"
-        elif command -v dnf &>/dev/null; then
-            dnf install -y "${pkgs_to_install[@]}"
-        else
-            error "无法自动安装依赖。请手动安装: ${pkgs_to_install[*]}"
-            return 1
+    if [ ${#pkgs_to_install[@]} -eq 0 ]; then success "所有依赖项均已安装。"; return 0; fi
+    info "正在准备安装缺失的依赖: ${pkgs_to_install[*]}"
+    if command -v apt-get &>/dev/null; then
+        apt-get update -y && apt-get install -y "${pkgs_to_install[@]}"
+    elif command -v yum &>/dev/null || command -v dnf &>/dev/null; then
+        local pm
+        if command -v yum &>/dev/null; then pm="yum"; else pm="dnf"; fi
+        if [[ " ${pkgs_to_install[@]} " =~ " wireguard-tools " || " ${pkgs_to_install[@]} " =~ " jq " ]]; then
+            info "在 RHEL/CentOS 系统上，需要 EPEL 源来安装部分依赖..."
+            $pm install -y epel-release
         fi
+        $pm install -y "${pkgs_to_install[@]}"
+    else
+        error "无法确定包管理器 (apt, yum, dnf)。请手动安装: ${pkgs_to_install[*]}"; return 1
     fi
-    
-    for pkg in curl tar jq openssl lsof ufw; do
-        if ! command -v "$pkg" &>/dev/null; then
-            error "依赖 '$pkg' 安装失败。脚本无法继续。"
-            return 1
+    for pkg in "${unique_deps[@]}"; do
+        local check_cmd="$pkg"
+        if [[ "$pkg" == "wireguard-tools" ]]; then check_cmd="wg"; fi
+        if ! command -v "$check_cmd" &>/dev/null; then
+            if [[ "$pkg" == "qrencode" ]]; then warn "可选依赖 'qrencode' 安装失败。二维码将不可用。"
+            else error "核心依赖 '$pkg' 安装失败。脚本无法继续。"; return 1; fi
         fi
     done
-    
-    success "核心依赖检查完成。"
+    success "依赖项准备完成。"
 }
 
 check_and_prepare_qrencode() {
     if ! command -v qrencode &>/dev/null; then
-        if apt-get install -y qrencode || yum install -y qrencode || dnf install -y qrencode; then
-            return 0
-        else
-            warn "自动安装 'qrencode' 失败。将无法生成二维码。"
-            return 1
-        fi
+        warn "未找到 qrencode 命令 (可选依赖)。二维码将不可用。"
+        return 1
     fi
     return 0
 }
@@ -257,9 +258,6 @@ install_singbox_core() {
     success "下载成功。"
 
     info "正在解压文件..."
-    if ! command -v tar &> /dev/null; then 
-        (apt-get update -y && apt-get install -y tar) || (yum install -y tar) || (dnf install -y tar)
-    fi
     if ! tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"; then
         error "解压失败。"
         rm -rf "$tmp_dir"
@@ -348,67 +346,36 @@ generate_single_reality_credentials() {
     fi
 }
 
-# --- [心脏移植手术] ---
-# 全新的、更可靠的 WARP 配置函数
 setup_warp() {
     info "正在配置 WARP 出站 (使用更可靠的手动API注册方法)..."
-
-    # 步骤 1: 确保依赖项已安装 (wireguard-tools & jq)
-    info "步骤 1/4: 检查核心依赖: wireguard-tools, jq..."
+    info "步骤 1/4: 验证核心依赖: wg, jq..."
     if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
-        if command -v apt-get &>/dev/null; then
-            apt-get update -y
-            apt-get install -y wireguard-tools jq
-        elif command -v yum &>/dev/null; then
-            yum install -y wireguard-tools jq
-        elif command -v dnf &>/dev/null; then
-            dnf install -y wireguard-tools jq
-        fi
-    fi
-    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
-        error "依赖项 'wireguard-tools' 或 'jq' 安装失败。无法继续配置WARP。"
+        error "依赖项 'wireguard-tools' 或 'jq' 未找到。请运行依赖安装程序。"
         return 1
     fi
-
-    # 步骤 2: 生成全新的密钥对
     info "步骤 2/4: 生成全新的WireGuard密钥对..."
     local PRIVATE_KEY=$(wg genkey)
     local PUBLIC_KEY=$(echo "${PRIVATE_KEY}" | wg pubkey)
-    if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
-        error "生成WireGuard密钥失败。"
-        return 1
-    fi
+    if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then error "生成WireGuard密钥失败。"; return 1; fi
     success "新密钥对生成成功。"
-
-    # 步骤 3: 手动通过 cURL 向 Cloudflare API 发起注册请求
     info "步骤 3/4: 正在通过API手动注册新的WARP账户..."
     local RESPONSE
     RESPONSE=$(curl -s -X POST \
-         -H "Content-Type: application/json" \
-         -H "Accept: application/json" \
-         -H "User-Agent: okhttp/3.12.1" \
+         -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: okhttp/3.12.1" \
          --data "{\"public_key\":\"${PUBLIC_KEY}\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")\",\"key\":\"${PUBLIC_KEY}\",\"locale\":\"en_US\",\"type\":\"Android\",\"model\":\"PC\"}" \
          "https://api.cloudflareclient.com/v0a2158/reg")
-
-    # 步骤 4: 解析API响应并设置全局变量
     if [ -n "$RESPONSE" ] && echo "$RESPONSE" | jq -e 'has("config")' > /dev/null; then
         info "步骤 4/4: API注册成功，正在解析配置..."
         WARP_PRIVATE_KEY="$PRIVATE_KEY"
         WARP_PEER_PUBLIC_KEY=$(echo "$RESPONSE" | jq -r '.config.peers[0].public_key')
         WARP_ADDRESS=$(echo "$RESPONSE" | jq -r '.config.interface.addresses.v4')
         WARP_RESERVED="[0,0,0]"
-        
         if [ -z "$WARP_PEER_PUBLIC_KEY" ] || [ "$WARP_PEER_PUBLIC_KEY" == "null" ] || [ -z "$WARP_ADDRESS" ] || [ "$WARP_ADDRESS" == "null" ]; then
-            error "从API响应中解析配置失败。响应内容: $RESPONSE"
-            return 1
+            error "从API响应中解析配置失败。响应内容: $RESPONSE"; return 1
         fi
-        success "WARP配置已成功获取并设置！"
-        save_persistent_info
-        return 0
+        success "WARP配置已成功获取并设置！"; save_persistent_info; return 0
     else
-        error "WARP API注册失败。服务器可能无法连接到Cloudflare API或IP信誉不佳。"
-        warn "API响应: $RESPONSE"
-        return 1
+        error "WARP API注册失败。服务器可能无法连接到Cloudflare API或IP信誉不佳。"; warn "API响应: $RESPONSE"; return 1
     fi
 }
 
@@ -473,13 +440,14 @@ create_config_json() {
     info "正在生成 8+1 节点终极配置文件..."
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
+    # --- BUG FIX 1: Corrected "reality-http-*" inbounds to be standard VLESS+Reality (TCP) ---
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "info", "timestamp": true },
   "dns": {
     "independent_cache": true, "strategy": "ipv4_only", "final": "cloudflare",
     "servers": [
-      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
+      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
     ],
     "rules": [ { "outbound": "any", "server": "cloudflare" } ]
   },
@@ -545,16 +513,10 @@ create_config_json() {
   ],
   "outbounds": [
     {
-      "type": "wireguard",
-      "tag": "warp-out",
-      "domain_strategy": "ipv4_only",
-      "local_address": ["${WARP_ADDRESS}/32"],
-      "private_key": "${WARP_PRIVATE_KEY}",
-      "server": "162.159.192.1",
-      "server_port": 2408,
-      "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
-      "reserved": ${WARP_RESERVED},
-      "mtu": 1420
+      "type": "wireguard", "tag": "warp-out", "domain_strategy": "ipv4_only",
+      "local_address": ["${WARP_ADDRESS}/32"], "private_key": "${WARP_PRIVATE_KEY}",
+      "server": "162.159.192.1", "server_port": 2408, "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
+      "reserved": ${WARP_RESERVED}, "mtu": 1420
     },
     { "type": "dns", "tag": "dns-out" },
     { "type": "direct", "tag": "direct", "domain_strategy": "ipv4_only" },
@@ -641,8 +603,8 @@ display_and_store_config_info() {
     
     local nodes_smart=(
         "hy2-smart;[智能] Hysteria2;${HY2_SMART_PORT};${HY2_SMART_PASSWORD}"
-        "reality-tcp-smart;[智能] Reality TCP;${REALITY_TCP_SMART_PORT};${REALITY_TCP_SMART_UUID};${REALITY_TCP_SMART_PUBLIC_KEY};${REALITY_TCP_SMART_SHORT_ID}"
-        "reality-http-smart;[智能] Reality HTTP;${REALITY_HTTP_SMART_PORT};${REALITY_HTTP_SMART_UUID};${REALITY_HTTP_SMART_PUBLIC_KEY};${REALITY_HTTP_SMART_SHORT_ID}"
+        "reality-tcp-smart;[智能] Reality (TCP);${REALITY_TCP_SMART_PORT};${REALITY_TCP_SMART_UUID};${REALITY_TCP_SMART_PUBLIC_KEY};${REALITY_TCP_SMART_SHORT_ID}"
+        "reality-http-smart;[智能] Reality (TCP Alt);${REALITY_HTTP_SMART_PORT};${REALITY_HTTP_SMART_UUID};${REALITY_HTTP_SMART_PUBLIC_KEY};${REALITY_HTTP_SMART_SHORT_ID}"
         "tuic-smart;[智能] TUIC v5;${TUIC_SMART_PORT};${TUIC_SMART_UUID};${TUIC_SMART_PASSWORD}"
     )
     for node in "${nodes_smart[@]}"; do
@@ -651,12 +613,13 @@ display_and_store_config_info() {
         echo -e "${GREEN}${BOLD} ${name} 节点:${NC}"
         echo -e "端口: ${GREEN}${port}${NC}"
         local link=""
+        # --- BUG FIX 2: Corrected "reality-http-*" link to be standard TCP ---
         case "$tag" in
             hy2-*)
                 link="hy2://${uuid}@${LAST_SERVER_IP}:${port}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#${name// /}-${LAST_SERVER_IP}"
                 echo -e "密码: ${GREEN}${uuid}${NC}"
                 ;;
-            reality-*)
+            reality-tcp-*|reality-http-*)
                 link="vless://${uuid}@${LAST_SERVER_IP}:${port}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${pubkey}&sid=${shortid}&flow=xtls-rprx-vision&type=tcp#${name// /}-${LAST_SERVER_IP}"
                 echo -e "UUID: ${GREEN}${uuid}${NC}"
                 ;;
@@ -676,8 +639,8 @@ display_and_store_config_info() {
 
     local nodes_direct=(
         "hy2-direct;[直连] Hysteria2;${HY2_DIRECT_PORT};${HY2_DIRECT_PASSWORD}"
-        "reality-tcp-direct;[直连] Reality TCP;${REALITY_TCP_DIRECT_PORT};${REALITY_TCP_DIRECT_UUID};${REALITY_TCP_DIRECT_PUBLIC_KEY};${REALITY_TCP_DIRECT_SHORT_ID}"
-        "reality-http-direct;[直连] Reality HTTP;${REALITY_HTTP_DIRECT_PORT};${REALITY_HTTP_DIRECT_UUID};${REALITY_HTTP_DIRECT_PUBLIC_KEY};${REALITY_HTTP_DIRECT_SHORT_ID}"
+        "reality-tcp-direct;[直连] Reality (TCP);${REALITY_TCP_DIRECT_PORT};${REALITY_TCP_DIRECT_UUID};${REALITY_TCP_DIRECT_PUBLIC_KEY};${REALITY_TCP_DIRECT_SHORT_ID}"
+        "reality-http-direct;[直连] Reality (TCP Alt);${REALITY_HTTP_DIRECT_PORT};${REALITY_HTTP_DIRECT_UUID};${REALITY_HTTP_DIRECT_PUBLIC_KEY};${REALITY_HTTP_DIRECT_SHORT_ID}"
         "tuic-direct;[直连] TUIC v5;${TUIC_DIRECT_PORT};${TUIC_DIRECT_UUID};${TUIC_DIRECT_PASSWORD}"
     )
     for node in "${nodes_direct[@]}"; do
@@ -686,12 +649,13 @@ display_and_store_config_info() {
         echo -e "${GREEN}${BOLD} ${name} 节点:${NC}"
         echo -e "端口: ${GREEN}${port}${NC}"
         local link=""
+        # --- BUG FIX 2: Corrected "reality-http-*" link to be standard TCP ---
         case "$tag" in
             hy2-*)
                 link="hy2://${uuid}@${LAST_SERVER_IP}:${port}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#${name// /}-${LAST_SERVER_IP}"
                 echo -e "密码: ${GREEN}${uuid}${NC}"
                 ;;
-            reality-*)
+            reality-tcp-*|reality-http-*)
                 link="vless://${uuid}@${LAST_SERVER_IP}:${port}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${pubkey}&sid=${shortid}&flow=xtls-rprx-vision&type=tcp#${name// /}-${LAST_SERVER_IP}"
                 echo -e "UUID: ${GREEN}${uuid}${NC}"
                 ;;
@@ -721,7 +685,7 @@ display_and_store_config_info() {
 
 install_all_nodes() {
     info "开始部署 8+1 终极节点矩阵..."
-    bootstrap_dependencies || return 1
+    # bootstrap_dependencies is called at script entry
     install_singbox_core || return 1
     get_server_ip
     setup_firewall || return 1
@@ -793,142 +757,70 @@ install_all_nodes() {
     display_and_store_config_info
 }
 
-# --- START: New Port Rotation Functions ---
-
-# Helper function to find a new random port
-# Usage: new_port_var=$(find_new_port "type" "used_ports_array")
+# --- START: Port Rotation Functions ---
 find_new_port() {
-    local type=$1
-    shift
-    local used_ports_array=("$@")
-    local random_port
-
+    local type=$1; shift; local used_ports_array=("$@"); local random_port
     while true; do
-        if [[ "$type" == "socks5" ]]; then
-            random_port=$(shuf -i 10800-10900 -n 1)
-        else # hy2 or tuic
-            random_port=$(shuf -i 10000-65535 -n 1)
-        fi
-        
-        # Check if port is in use by system OR by our script
+        if [[ "$type" == "socks5" ]]; then random_port=$(shuf -i 10800-10900 -n 1)
+        else random_port=$(shuf -i 10000-65535 -n 1); fi
         if ! lsof -i:"$random_port" >/dev/null && ! [[ " ${used_ports_array[@]} " =~ " ${random_port} " ]]; then
-            echo "$random_port"
-            return
+            echo "$random_port"; return
         fi
     done
 }
-
-# Helper function to find new reality ports
-# Usage: read -r p1 p2 p3 <<< $(find_new_reality_ports "used_ports_array")
 find_new_reality_ports() {
-    local used_ports_array=("$@")
-    local high_conceal_ports_shuffled=($(shuf -e "${REALITY_HIGH_AVAILABILITY_PORTS[@]}"))
-    local new_ports=()
-    
+    local used_ports_array=("$@"); local high_conceal_ports_shuffled=($(shuf -e "${REALITY_HIGH_AVAILABILITY_PORTS[@]}")); local new_ports=()
     for p in "${high_conceal_ports_shuffled[@]}"; do
         if ! lsof -i:"$p" >/dev/null && ! [[ " ${used_ports_array[@]} " =~ " ${p} " ]]; then
             new_ports+=("$p")
-            if [ ${#new_ports[@]} -eq 3 ]; then
-                echo "${new_ports[@]}"
-                return
-            fi
+            if [ ${#new_ports[@]} -eq 3 ]; then echo "${new_ports[@]}"; return; fi
         fi
-    done
-    
-    # If we reach here, not enough ports were found
-    echo "" # Return empty string on failure
+    done; echo ""
 }
-
 execute_port_rotation() {
     local targets=("$@")
-    if [[ " ${targets[@]} " =~ " all " ]]; then
-        targets=("hy2" "tuic" "reality" "socks5")
-    fi
-
-    info "开始执行端口更换程序..."
-    load_persistent_info
-
-    info "步骤 1/5: 识别并准备关闭旧端口..."
-    local ports_to_close=()
-    local static_ports=("443")
-
+    if [[ " ${targets[@]} " =~ " all " ]]; then targets=("hy2" "tuic" "reality" "socks5"); fi
+    info "开始执行端口更换程序..."; load_persistent_info
+    info "步骤 1/5: 识别并准备关闭旧端口..."; local ports_to_close=(); local static_ports=("443")
     if ! [[ " ${targets[@]} " =~ " hy2 " ]]; then static_ports+=("$HY2_SMART_PORT" "$HY2_DIRECT_PORT"); else ports_to_close+=("${HY2_SMART_PORT}/udp" "${HY2_DIRECT_PORT}/udp"); fi
     if ! [[ " ${targets[@]} " =~ " tuic " ]]; then static_ports+=("$TUIC_SMART_PORT" "$TUIC_DIRECT_PORT"); else ports_to_close+=("${TUIC_SMART_PORT}/udp" "${TUIC_DIRECT_PORT}/udp"); fi
     if ! [[ " ${targets[@]} " =~ " reality " ]]; then static_ports+=("$REALITY_HTTP_SMART_PORT" "$REALITY_TCP_DIRECT_PORT" "$REALITY_HTTP_DIRECT_PORT"); else ports_to_close+=("${REALITY_HTTP_SMART_PORT}/tcp" "${REALITY_TCP_DIRECT_PORT}/tcp" "${REALITY_HTTP_DIRECT_PORT}/tcp"); fi
     if ! [[ " ${targets[@]} " =~ " socks5 " ]]; then static_ports+=("$SOCKS5_PORT"); else ports_to_close+=("${SOCKS5_PORT}/tcp"); fi
-    
     for port_rule in "${ports_to_close[@]}"; do
-        if [ -n "$port_rule" ] && [[ "$port_rule" != "/" ]]; then
-            info "关闭旧端口规则: ${port_rule}"
-            ufw delete allow "$port_rule" >/dev/null 2>&1
-        fi
+        if [ -n "$port_rule" ] && [[ "$port_rule" != "/" ]]; then info "关闭旧端口规则: ${port_rule}"; ufw delete allow "$port_rule" >/dev/null 2>&1; fi
     done
-
-    info "步骤 2/5: 正在生成新端口..."
-    local used_ports=("${static_ports[@]}")
-
+    info "步骤 2/5: 正在生成新端口..."; local used_ports=("${static_ports[@]}")
     if [[ " ${targets[@]} " =~ " reality " ]]; then
-        local new_reality_ports=$(find_new_reality_ports "${used_ports[@]}")
-        if [ -z "$new_reality_ports" ]; then error "高隐蔽性端口池已用尽或全部被占用。"; return 1; fi
-        read -r REALITY_HTTP_SMART_PORT REALITY_TCP_DIRECT_PORT REALITY_HTTP_DIRECT_PORT <<< "$new_reality_ports"
-        used_ports+=("$REALITY_HTTP_SMART_PORT" "$REALITY_TCP_DIRECT_PORT" "$REALITY_HTTP_DIRECT_PORT")
+        local new_reality_ports=$(find_new_reality_ports "${used_ports[@]}"); if [ -z "$new_reality_ports" ]; then error "高隐蔽性端口池已用尽或全部被占用。"; return 1; fi
+        read -r REALITY_HTTP_SMART_PORT REALITY_TCP_DIRECT_PORT REALITY_HTTP_DIRECT_PORT <<< "$new_reality_ports"; used_ports+=("$REALITY_HTTP_SMART_PORT" "$REALITY_TCP_DIRECT_PORT" "$REALITY_HTTP_DIRECT_PORT")
         success "新的 Reality 端口: ${REALITY_HTTP_SMART_PORT}, ${REALITY_TCP_DIRECT_PORT}, ${REALITY_HTTP_DIRECT_PORT}"
     fi
-
     if [[ " ${targets[@]} " =~ " hy2 " ]]; then
-        HY2_SMART_PORT=$(find_new_port "hy2" "${used_ports[@]}"); used_ports+=("$HY2_SMART_PORT")
-        HY2_DIRECT_PORT=$(find_new_port "hy2" "${used_ports[@]}"); used_ports+=("$HY2_DIRECT_PORT")
+        HY2_SMART_PORT=$(find_new_port "hy2" "${used_ports[@]}"); used_ports+=("$HY2_SMART_PORT"); HY2_DIRECT_PORT=$(find_new_port "hy2" "${used_ports[@]}"); used_ports+=("$HY2_DIRECT_PORT")
         success "新的 Hysteria2 端口: ${HY2_SMART_PORT}, ${HY2_DIRECT_PORT}"
     fi
-
     if [[ " ${targets[@]} " =~ " tuic " ]]; then
-        TUIC_SMART_PORT=$(find_new_port "tuic" "${used_ports[@]}"); used_ports+=("$TUIC_SMART_PORT")
-        TUIC_DIRECT_PORT=$(find_new_port "tuic" "${used_ports[@]}"); used_ports+=("$TUIC_DIRECT_PORT")
+        TUIC_SMART_PORT=$(find_new_port "tuic" "${used_ports[@]}"); used_ports+=("$TUIC_SMART_PORT"); TUIC_DIRECT_PORT=$(find_new_port "tuic" "${used_ports[@]}"); used_ports+=("$TUIC_DIRECT_PORT")
         success "新的 TUIC 端口: ${TUIC_SMART_PORT}, ${TUIC_DIRECT_PORT}"
     fi
-
     if [[ " ${targets[@]} " =~ " socks5 " ]]; then
-        SOCKS5_PORT=$(find_new_port "socks5" "${used_ports[@]}"); used_ports+=("$SOCKS5_PORT")
-        success "新的 SOCKS5 端口: ${SOCKS5_PORT}"
+        SOCKS5_PORT=$(find_new_port "socks5" "${used_ports[@]}"); used_ports+=("$SOCKS5_PORT"); success "新的 SOCKS5 端口: ${SOCKS5_PORT}"
     fi
-    
-    info "步骤 3/5: 更新配置文件..."
-    create_config_json || return 1
-    
-    info "步骤 4/5: 为新端口开放防火墙规则..."
-    update_firewall_rules
-
-    info "步骤 5/5: 重启服务并显示新链接..."
-    start_singbox_service || return 1
-    save_persistent_info
-    
-    success "端口更换成功！"
-    warn "请立即使用下方显示的新链接更新您的客户端配置！"
-    display_and_store_config_info
+    info "步骤 3/5: 更新配置文件..."; create_config_json || return 1
+    info "步骤 4/5: 为新端口开放防火墙规则..."; update_firewall_rules
+    info "步骤 5/5: 重启服务并显示新链接..."; start_singbox_service || return 1
+    save_persistent_info; success "端口更换成功！"; warn "请立即使用下方显示的新链接更新您的客户端配置！"; display_and_store_config_info
 }
-
 show_rotate_ports_menu() {
-    clear
-    print_author_info
-    echo -e "${CYAN}${BOLD}端口更换子菜单:${NC}"
-    echo "------------------------------------------------"
-    echo "  1. 更换所有随机端口 (推荐)"
-    echo "  2. 只更换 Hysteria2 端口 (2个)"
-    echo "  3. 只更换 TUIC 端口 (2个)"
-    echo "  4. 只更换非443的Reality端口 (3个)"
-    echo "  5. 只更换 SOCKS5 端口 (1个)"
-    echo "  0. 返回主菜单"
+    clear; print_author_info
+    echo -e "${CYAN}${BOLD}端口更换子菜单:${NC}"; echo "------------------------------------------------"
+    echo "  1. 更换所有随机端口 (推荐)"; echo "  2. 只更换 Hysteria2 端口 (2个)"; echo "  3. 只更换 TUIC 端口 (2个)"
+    echo "  4. 只更换非443的Reality端口 (3个)"; echo "  5. 只更换 SOCKS5 端口 (1个)"; echo "  0. 返回主菜单"
     echo "================================================"
     read -p "请输入选项 [0-5]: " rotate_choice
-
     case "$rotate_choice" in
-        1) execute_port_rotation "all" ;;
-        2) execute_port_rotation "hy2" ;;
-        3) execute_port_rotation "tuic" ;;
-        4) execute_port_rotation "reality" ;;
-        5) execute_port_rotation "socks5" ;;
-        0) return ;;
-        *) error "无效选项。" ;;
+        1) execute_port_rotation "all" ;; 2) execute_port_rotation "hy2" ;; 3) execute_port_rotation "tuic" ;;
+        4) execute_port_rotation "reality" ;; 5) execute_port_rotation "socks5" ;; 0) return ;; *) error "无效选项。" ;;
     esac
 }
 
@@ -938,74 +830,42 @@ show_current_import_info() {
 }
 
 uninstall_singbox() {
-    warn "你确定要卸载 Sing-box 吗?"
-    read -p "此操作将停止并禁用服务，清理所有组件。是否继续卸载? (y/N): " uninstall_choice
+    warn "你确定要卸载 Sing-box 吗?"; read -p "此操作将停止并禁用服务，清理所有组件。是否继续卸载? (y/N): " uninstall_choice
     if [[ ! "$uninstall_choice" =~ ^[Yy]$ ]]; then info "卸载已取消。"; return; fi
-    
-    info "正在清理防火墙规则..."
-    load_persistent_info
+    info "正在清理防火墙规则..."; load_persistent_info
     if command -v ufw &>/dev/null; then
-        local ports_to_close=(
-            "${REALITY_TCP_SMART_PORT}/tcp" "${REALITY_HTTP_SMART_PORT}/tcp" "${REALITY_TCP_DIRECT_PORT}/tcp"
-            "${REALITY_HTTP_DIRECT_PORT}/tcp" "${HY2_SMART_PORT}/udp" "${HY2_DIRECT_PORT}/udp"
-            "${TUIC_SMART_PORT}/udp" "${TUIC_DIRECT_PORT}/udp" "${SOCKS5_PORT}/tcp" "443/tcp"
-        )
+        local ports_to_close=( "${REALITY_TCP_SMART_PORT}/tcp" "${REALITY_HTTP_SMART_PORT}/tcp" "${REALITY_TCP_DIRECT_PORT}/tcp" "${REALITY_HTTP_DIRECT_PORT}/tcp" "${HY2_SMART_PORT}/udp" "${HY2_DIRECT_PORT}/udp" "${TUIC_SMART_PORT}/udp" "${TUIC_DIRECT_PORT}/udp" "${SOCKS5_PORT}/tcp" "443/tcp" )
         for port_rule in "${ports_to_close[@]}"; do
             if [ -n "$port_rule" ] && [[ "$port_rule" != "/" ]]; then ufw delete allow "$port_rule" >/dev/null 2>&1; fi
-        done
-        ufw reload >/dev/null 2>&1
-        success "已清理由本脚本创建的防火墙规则。"
+        done; ufw reload >/dev/null 2>&1; success "已清理由本脚本创建的防火墙规则。"
     fi
-    
-    info "正在停止并禁用 sing-box 服务..."
-    systemctl stop sing-box &>/dev/null
-    systemctl disable sing-box &>/dev/null
-    rm -f "$SINGBOX_SERVICE_FILE"
-    systemctl daemon-reload
-    
-    info "正在删除文件..."
-    rm -f "$SINGBOX_INSTALL_PATH_EXPECTED"
-    rm -rf "$SINGBOX_CONFIG_DIR"
+    info "正在停止并禁用 sing-box 服务..."; systemctl stop sing-box &>/dev/null; systemctl disable sing-box &>/dev/null
+    rm -f "$SINGBOX_SERVICE_FILE"; systemctl daemon-reload
+    info "正在删除文件..."; rm -f "$SINGBOX_INSTALL_PATH_EXPECTED"; rm -rf "$SINGBOX_CONFIG_DIR"
     read -p "是否删除 Hysteria2/TUIC 共享证书目录 ${HYSTERIA_CERT_DIR}? (y/N): " delete_cert_dir_choice
-    if [[ "$delete_cert_dir_choice" =~ ^[Yy]$ ]]; then
-        rm -rf "$HYSTERIA_CERT_DIR"
-    fi
-    
+    if [[ "$delete_cert_dir_choice" =~ ^[Yy]$ ]]; then rm -rf "$HYSTERIA_CERT_DIR"; fi
     success "Sing-box 卸载完成。"
 }
 
 manage_singbox() {
     local action=$1
     find_and_set_singbox_cmd
-    if [ -z "$SINGBOX_CMD" ] && [[ ! "$action" =~ ^(start|stop|status)$ ]]; then
-        error "无法找到 Sing-box command. 操作中止。"; return 1;
-    fi
-
+    if [ -z "$SINGBOX_CMD" ] && [[ ! "$action" =~ ^(start|stop|status)$ ]]; then error "无法找到 Sing-box command. 操作中止。"; return 1; fi
     case "$action" in
         start|stop|restart|status)
             if [[ "$action" == "restart" ]]; then
-                if [ -f "$SINGBOX_CONFIG_FILE" ]; then
-                    info "重启前检查配置文件..."
-                    if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
-                        error "配置文件检查失败，无法重启。请先修复配置文件。"; return 1;
-                    fi
+                if [ -f "$SINGBOX_CONFIG_FILE" ]; then info "重启前检查配置文件..."
+                    if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then error "配置文件检查失败，无法重启。请先修复配置文件。"; return 1; fi
                 fi
             fi
-            systemctl "$action" sing-box
-            sleep 1
-            if [[ "$action" == "status" ]]; then return; fi
-            if systemctl is-active --quiet sing-box; then
-                success "操作成功，服务正在运行。"
-            elif [[ "$action" == "stop" ]]; then
-                 success "操作成功，服务已停止。"
-            else
-                warn "操作可能未成功或服务未运行。"
-            fi
+            systemctl "$action" sing-box; sleep 1; if [[ "$action" == "status" ]]; then return; fi
+            if systemctl is-active --quiet sing-box; then success "操作成功，服务正在运行。"
+            elif [[ "$action" == "stop" ]]; then success "操作成功，服务已停止。"
+            else warn "操作可能未成功或服务未运行。"; fi
             ;;
         log) journalctl -u sing-box -f --no-pager -n 50 ;;
         view_config)
-            if [ -f "$SINGBOX_CONFIG_FILE" ]; then
-                info "当前配置文件 (${SINGBOX_CONFIG_FILE}):"
+            if [ -f "$SINGBOX_CONFIG_FILE" ]; then info "当前配置文件 (${SINGBOX_CONFIG_FILE}):"
                 if command -v jq &>/dev/null; then jq . "$SINGBOX_CONFIG_FILE"; else cat "$SINGBOX_CONFIG_FILE"; fi
             else error "配置文件不存在: ${SINGBOX_CONFIG_FILE}"; fi
             ;;
@@ -1021,54 +881,29 @@ manage_singbox() {
 }
 
 show_menu() {
-    clear 
-    print_author_info
-
-    echo -e "${GREEN}${BOLD}安装与重置:${NC}"
-    echo "  1. 安装 / 重置 终极节点矩阵 (8+1)"
+    clear; print_author_info
+    echo -e "${GREEN}${BOLD}安装与重置:${NC}"; echo "  1. 安装 / 重置 终极节点矩阵 (8+1)"
     echo "------------------------------------------------"
-    echo -e "${YELLOW}${BOLD}核心管理:${NC}"
-    echo "  2. 启动 Sing-box 服务"
-    echo "  3. 停止 Sing-box 服务"
-    echo "  4. 重启 Sing-box 服务"
-    echo "  5. 查看 Sing-box 服务状态"
-    echo "  6. 查看 Sing-box 实时日志"
+    echo -e "${YELLOW}${BOLD}核心管理:${NC}"; echo "  2. 启动 Sing-box 服务"; echo "  3. 停止 Sing-box 服务"; echo "  4. 重启 Sing-box 服务"; echo "  5. 查看 Sing-box 服务状态"; echo "  6. 查看 Sing-box 实时日志"
     echo "------------------------------------------------"
-    echo -e "${CYAN}${BOLD}配置与节点:${NC}"
-    echo "  7. 显示所有节点导入信息 (二维码)"
-    echo "  8. 更换端口 (子菜单)"
-    echo "  9. 查看当前配置文件 (格式化)"
-    echo "  10. 手动编辑配置文件 (nano/vim)"
+    echo -e "${CYAN}${BOLD}配置与节点:${NC}"; echo "  7. 显示所有节点导入信息 (二维码)"; echo "  8. 更换端口 (子菜单)"; echo "  9. 查看当前配置文件 (格式化)"; echo "  10. 手动编辑配置文件 (nano/vim)"
     echo "------------------------------------------------"
-    echo -e "${RED}${BOLD}系统与维护:${NC}"
-    echo "  11. 检查/安装 Sing-box 内核 (v1.8.0)"
-    echo "  12. 卸载 (清理所有组件)"
-    echo "  0. 退出脚本"
+    echo -e "${RED}${BOLD}系统与维护:${NC}"; echo "  11. 检查/安装 Sing-box 内核 (v1.8.0)"; echo "  12. 卸载 (清理所有组件)"; echo "  0. 退出脚本"
     echo "================================================"
     read -p "请输入选项 [0-12]: " choice
 
     case "$choice" in
-        1) install_all_nodes ;;
-        2) manage_singbox "start" ;;
-        3) manage_singbox "stop" ;;
-        4) manage_singbox "restart" ;;
-        5) manage_singbox "status" ;;
-        6) manage_singbox "log" ;;
-        7) show_current_import_info ;;
-        8) show_rotate_ports_menu ;;
-        9) manage_singbox "view_config" ;;
-        10) manage_singbox "edit_config" ;;
-        11) install_singbox_core && manage_singbox "restart" ;;
-        12) uninstall_singbox ;;
-        0) exit 0 ;;
-        *) error "无效选项，请输入 0 到 12 之间的数字。" ;;
-    esac
-    echo
+        1) install_all_nodes ;; 2) manage_singbox "start" ;; 3) manage_singbox "stop" ;; 4) manage_singbox "restart" ;;
+        5) manage_singbox "status" ;; 6) manage_singbox "log" ;; 7) show_current_import_info ;; 8) show_rotate_ports_menu ;;
+        9) manage_singbox "view_config" ;; 10) manage_singbox "edit_config" ;; 11) install_singbox_core && manage_singbox "restart" ;;
+        12) uninstall_singbox ;; 0) exit 0 ;; *) error "无效选项，请输入 0 到 12 之间的数字。" ;;
+    esac; echo
 }
 
 # --- 脚本入口点 ---
 check_root
-# Bootstrap logic is now at the top
+# 在主逻辑开始前就运行依赖检查
+bootstrap_dependencies || exit 1
 find_and_set_singbox_cmd
 load_persistent_info
 
