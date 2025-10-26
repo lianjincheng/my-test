@@ -121,6 +121,11 @@ attempt_install_package() {
     local package_name="$1"
     local friendly_name="${2:-$package_name}"
 
+    # 在某些系统上，wireguard-tools的命令是wg，但包名不同
+    if [[ "$package_name" == "wireguard-tools" ]] && command -v wg &>/dev/null; then
+        return 0
+    fi
+
     if command -v "$package_name" &>/dev/null; then
         return 0
     fi
@@ -135,7 +140,12 @@ attempt_install_package() {
     if command -v apt-get &>/dev/null; then
         apt-get update -y && apt-get install -y "$package_name"
     elif command -v yum &>/dev/null; then
-        yum install -y "$package_name"
+        # For CentOS/RHEL, wireguard-tools might be in EPEL repo
+        if [[ "$package_name" == "wireguard-tools" ]]; then
+            yum install -y epel-release && yum install -y wireguard-tools
+        else
+             yum install -y "$package_name"
+        fi
     elif command -v dnf &>/dev/null; then
         dnf install -y "$package_name"
     else
@@ -143,7 +153,12 @@ attempt_install_package() {
         return 1
     fi
 
-    if command -v "$package_name" &>/dev/null; then
+    local check_cmd="$package_name"
+    if [[ "$package_name" == "wireguard-tools" ]]; then
+        check_cmd="wg"
+    fi
+
+    if command -v "$check_cmd" &>/dev/null; then
         success "'${friendly_name}' 安装成功。"
         return 0
     else
@@ -306,20 +321,26 @@ install_singbox_core() {
 }
 
 # --- [心脏移植手术] ---
-# 全新的、更可靠的 WARP 配置函数
+# 全新的、更可靠的 WARP 配置函数 (已修正依赖安装逻辑)
 setup_warp() {
     info "正在配置 WARP 出站 (使用更可靠的手动API注册方法)..."
 
-    # 步骤 1: 确保依赖项已安装 (wireguard-tools & jq)
-    info "步骤 1/4: 检查核心依赖: wireguard-tools, jq..."
-    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
-        apt-get update -y
-        apt-get install -y wireguard-tools jq
-    fi
-    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
-        error "依赖项 'wireguard-tools' 或 'jq' 安装失败。无法继续配置WARP。"
+    # 步骤 1: 确保依赖项已安装 (使用通用的安装函数)
+    info "步骤 1/4: 检查并安装核心依赖: wireguard-tools, jq..."
+    if ! attempt_install_package "wireguard-tools" "WireGuard工具集"; then
+        error "依赖项 'wireguard-tools' 安装失败。无法继续配置WARP。"
         return 1
     fi
+    if ! attempt_install_package "jq" "JSON处理工具(jq)"; then
+        error "依赖项 'jq' 安装失败。无法继续配置WARP。"
+        return 1
+    fi
+    # 再次确认命令是否存在
+    if ! command -v wg &>/dev/null || ! command -v jq &>/dev/null; then
+        error "依赖项安装后仍无法找到 wg 或 jq 命令。请手动安装后重试。"
+        return 1
+    fi
+    success "WARP所需依赖项已准备就绪。"
 
     # 步骤 2: 生成全新的密钥对
     info "步骤 2/4: 生成全新的WireGuard密钥对..."
