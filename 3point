@@ -461,7 +461,7 @@ create_config_json() {
 
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
-  "log": { "level": "info", "timestamp": true },
+  "log": { "level": "error", "timestamp": true },
   "dns": {
     "independent_cache": true, "strategy": "ipv4_only", "final": "cloudflare",
     "servers": [
