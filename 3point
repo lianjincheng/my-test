@@ -3,7 +3,7 @@
 # Script for Sing-Box Hysteria2 & Reality Management (Final Version: 3-Node Hybrid-Policy with Upgraded WARP)
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本测试ipv4最终版"
+AUTHOR_NAME="singbox脚本 3-Node with WARP"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -465,10 +465,10 @@ create_config_json() {
   "dns": {
     "independent_cache": true, "strategy": "ipv4_only", "final": "cloudflare",
     "servers": [
-      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" },
+      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
     ],
     "rules": [
-      { "outbound": "any", "server": "cloudflare" },
+      { "outbound": "any", "server": "cloudflare" }
     ]
   },
   "inbounds": [
