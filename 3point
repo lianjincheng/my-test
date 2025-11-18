@@ -491,6 +491,14 @@ create_config_json() {
           "enabled": true, "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 },
           "private_key": "${REALITY_SMART_PRIVATE_KEY_FOR_CONFIG}", "short_id": "${REALITY_SMART_SHORT_ID}"
         }
+      },
+    "multiplex": {
+        "enabled": true,
+        "brutal": {
+          "enabled": true,
+          "up_mbps": 50,
+          "down_mbps": 1000
+        }
       }
     },
     {
