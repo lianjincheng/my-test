@@ -181,7 +181,7 @@ EOF
 main() { 
     clear
     echo -e "${GREEN}====================================================${NC}"
-    echo -e "${GREEN}    终极 VPS 性能优化脚本 (v8.3 - BBR+FQ_PIE 增强排错版)    ${NC}"
+    echo -e "${GREEN}    终极 VPS 性能优化脚本 (v8.3 - BBR+FQ_PIE)    ${NC}"
     echo -e "${GREEN}====================================================${NC}"
     echo
     check_root
