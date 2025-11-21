@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Sing-Box-Plus 管理脚本 (v4.6 Production)
+#  Sing-Box-Plus 管理脚本 (v4.7 Final Polished)
 #  变更日志：
-#   - [修复] 修复 VLESS Vision 流控缺失、Multiplex 语法错误
-#   - [修复] 修复检测端口时 grep 退出码导致脚本中断的 Bug
-#   - [修复] 修复 Bash RANDOM 限制导致无法生成高位端口
-#   - [修复] 修复 WARP IPv6 出站绑定问题
-#   - [优化] 安装/重装时优先保留原有端口，避免客户端配置失效
-#   - [优化] 增强 JQ 模板稳定性与兼容性
+#   - [优化] 更换端口后立即自动打印新的节点链接 (UX 改进)
+#   - [核心] 包含之前所有关于 IPv6/Vision/Multiplex 的修复
 # ============================================================
 set -Eeuo pipefail
 
@@ -18,7 +14,6 @@ handle_error() {
     local error_cmd="$2"
     local func_name="${FUNCNAME[1]}"
     
-    # 忽略 grep 找不到内容的错误 (退出码1)
     if [[ $exit_code -eq 1 ]] && [[ "$error_cmd" == *"grep"* ]]; then
         return 0
     fi
@@ -46,9 +41,8 @@ CONF_JSON="$SB_DIR/config.json"
 DATA_DIR="$SB_DIR/data"
 CERT_DIR="$SB_DIR/cert"
 SYSTEMD_SERVICE="sing-box.service"
-# 锁定版本
 SB_VERSION="1.10.7"
-# 颜色定义
+
 C_RESET="\033[0m"
 C_BOLD="\033[1m"
 C_RED="\033[31m"
@@ -57,15 +51,13 @@ C_YELLOW="\033[33m"
 C_BLUE="\033[34m"
 C_CYAN="\033[36m"
 C_PURPLE="\033[35m"
-# 默认配置开关
+
 ENABLE_WARP=${ENABLE_WARP:-true}
 REALITY_SERVER=${REALITY_SERVER:-www.microsoft.com}
 REALITY_SERVER_PORT=${REALITY_SERVER_PORT:-443}
 GRPC_SERVICE=${GRPC_SERVICE:-grpc}
-# TCP Brutal 配置
 BRUTAL_UP=${BRUTAL_UP:-100}
 BRUTAL_DOWN=${BRUTAL_DOWN:-1000}
-# 兼容 Sing-Box v1.10 的 WireGuard 定义
 export ENABLE_DEPRECATED_WIREGUARD_OUTBOUND=true
 
 # ===== [2] 基础工具函数 =====
@@ -103,7 +95,6 @@ install_base_deps(){
   if ! command -v ufw >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1 && ! command -v firewall-cmd >/dev/null 2>&1; then 
     miss+=("iptables")
   fi
-  # 检查 uuidgen
   if ! command -v uuidgen >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then miss+=("uuid-runtime"); else miss+=("util-linux"); fi
   fi
@@ -138,7 +129,6 @@ is_port_occupied() {
 check_port_443_conflict() {
   if is_port_occupied 443; then
     local proc_name=""
-    # 添加 || true 防止 grep 失败导致 set -e 退出
     if command -v ss >/dev/null 2>&1; then
       proc_name=$(ss -tulpn | grep ":443\b" | head -n1 || true)
     elif command -v netstat >/dev/null 2>&1; then
@@ -149,7 +139,6 @@ check_port_443_conflict() {
       info "端口 443 正被当前的 Sing-Box 占用，这是正常的。"
       return 0
     elif [[ -z "$proc_name" ]]; then
-       # 有时候 is_port_occupied 返回 true 但 grep 没抓到（罕见竞争条件），放行
        return 0
     else
       err "检测到端口 443 被其他进程占用！"
@@ -171,11 +160,9 @@ gen_port() {
     elif command -v openssl >/dev/null 2>&1; then
         local hex; hex=$(openssl rand -hex 2); p=$((16#$hex))
     else 
-        # 修复 Bash RANDOM 范围不足的问题
         p=$(( (RANDOM * 32768 + RANDOM) % 55536 + 10000 ))
     fi
     
-    # 确保范围正确
     [[ $p -lt 10000 || $p -gt 65535 ]] && continue
     
     if [[ " ${PORTS[*]-} " == *" $p "* ]]; then continue; fi
@@ -208,7 +195,6 @@ generate_all_ports(){
   rand_ports_reset
   info "正在规划并检测端口可用性..."
   check_port_443_conflict
-  # 强制 vless+reality 端口为 443
   PORT_VLESSR=443
   PORTS+=("$PORT_VLESSR")
   for v in "${PORT_VARS[@]}"; do
@@ -381,7 +367,6 @@ install_singbox(){
   tar -xzf "$tmp/sb.tar.gz" -C "$tmp"
   local bin; bin=$(find "$tmp" -type f -name "sing-box" | head -n1)
   if [[ -n "$bin" ]]; then 
-    # 先停止服务以防文件占用
     systemctl stop "$SYSTEMD_SERVICE" >/dev/null 2>&1 || true
     install -m 0755 "$bin" "$BIN_PATH"
     success "Sing-Box v${SB_VERSION} 安装成功。"
@@ -645,27 +630,25 @@ get_current_port_values(){ local vals=(); for v in "${PORT_VARS[@]}"; do [[ -n "
 rotate_ports_action(){
   info "更换所有端口..."
   load_ports; OLD_PORTS=($(get_current_port_values))
-  # 这里会重新执行 generate_all_ports，包含检测 443 占用
+  
   rand_ports_reset; for v in "${PORT_VARS[@]}"; do eval "$v=\"\""; done; generate_all_ports
   write_config
   if [[ ${#OLD_PORTS[@]} -gt 0 ]]; then info "清理旧规则..."; manage_firewall "delete" "${OLD_PORTS[@]}"; fi
   NEW_PORTS=($(get_current_port_values)); manage_firewall "allow" "${NEW_PORTS[@]}"
   systemctl restart "$SYSTEMD_SERVICE" 2>/dev/null || systemctl restart "$SYSTEMD_SERVICE"
   success "端口已更换"
+  # [Fix] 自动打印新的连接信息
+  print_links
 }
 
 deploy(){
   info "开始部署..."
   install_base_deps; mkdir -p "$SB_DIR" "$DATA_DIR" "$CERT_DIR"; mk_cert || warn "mk_cert 返回非 0 状态"
-  
-  # 核心优化：安装/升级时，尝试加载旧端口配置，保持端口不变（除非冲突）
   load_ports
-  
   install_singbox
   generate_all_ports; write_config; install_systemd
   NEW_PORTS=($(get_current_port_values)); manage_firewall "allow" "${NEW_PORTS[@]}"
   systemctl restart "$SYSTEMD_SERVICE"; success "部署成功！"; print_links
-  # 提示 BBR
   local sys_algo; sys_algo=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
   if [[ "$sys_algo" != "bbr" ]]; then
     echo -e "${C_YELLOW}提示：当前系统 TCP 拥塞控制算法为 [$sys_algo]。建议开启 BBR 以获得 TUIC/Hysteria 的最佳性能。${C_RESET}"
@@ -710,7 +693,7 @@ ${C_CYAN}>> WARP 节点范例:${C_RESET}"
 }
 
 menu(){
-  clear; echo -e "${C_PURPLE}Sing-Box Manager (v4.6 Production)${C_RESET}"
+  clear; echo -e "${C_PURPLE}Sing-Box Manager (v4.7 Final)${C_RESET}"
   echo "1. 安装 / 重装 (v${SB_VERSION})"
   echo "2. 查看链接"
   echo "3. 更换端口 (含 443 检测)"
