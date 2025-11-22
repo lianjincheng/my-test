@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-#  Sing-Box-Plus 管理脚本 (v4.7 Final Polished)
-#  变更日志：
-#   - [优化] 更换端口后立即自动打印新的节点链接 (UX 改进)
-#   - [核心] 包含之前所有关于 IPv6/Vision/Multiplex 的修复
+#  Sing-Box-Plus 管理脚本 (v4.8 Stability Fix)
+#  修复日志：
+#   - [严重] 修复 gen_port 中检测端口占用时 grep 返回 1 导致脚本崩溃的问题
+#   - [优化] 移除 shuf 依赖，改用纯 Bash 生成随机端口，提高兼容性
 # ============================================================
 set -Eeuo pipefail
 
@@ -14,6 +14,7 @@ handle_error() {
     local error_cmd="$2"
     local func_name="${FUNCNAME[1]}"
     
+    # 忽略 grep 找不到内容的错误
     if [[ $exit_code -eq 1 ]] && [[ "$error_cmd" == *"grep"* ]]; then
         return 0
     fi
@@ -24,11 +25,6 @@ ${C_RED}=== 错误报告 ===${C_RESET}"
     echo -e "出错行号: ${C_BOLD}$error_line${C_RESET}"
     echo -e "出错命令: ${C_BOLD}$error_cmd${C_RESET}"
     [ -n "$func_name" ] && echo -e "所在函数: ${C_BOLD}$func_name${C_RESET}"
-    echo -e "
-${C_YELLOW}调试建议:${C_RESET}"
-    echo -e "1. 检查该行代码逻辑"
-    echo -e "2. 确认相关依赖是否安装"
-    echo -e "3. 查看完整日志: journalctl -u sing-box.service -f"
     exit $exit_code
 }
 
@@ -114,16 +110,26 @@ install_base_deps(){
   fi
 }
 
-# ===== [4] 端口管理 =====
+# ===== [4] 端口管理 (核心修复部分) =====
 PORTS=()
+
+# [修复] 使用变量接收输出，避免 grep 直接抛出退出码 1 触发 set -e
 is_port_occupied() {
   local port=$1
+  local match=""
+  
   if command -v ss >/dev/null 2>&1; then
-    if ss -tulpn | grep -q ":${port}\b"; then return 0; fi
+    # 使用 || true 强制命令返回成功，只看输出是否为空
+    match=$(ss -tulpn | grep ":${port}\b" || true)
   elif command -v netstat >/dev/null 2>&1; then
-    if netstat -tulpn | grep -q ":${port}\b"; then return 0; fi
+    match=$(netstat -tulpn | grep ":${port}\b" || true)
   fi
-  return 1
+  
+  if [[ -n "$match" ]]; then
+    return 0 # 占用
+  else
+    return 1 # 未占用
+  fi
 }
 
 check_port_443_conflict() {
@@ -149,25 +155,27 @@ check_port_443_conflict() {
   fi
 }
 
+# [修复] 移除 shuf 依赖，改用 Bash 内置计算，更稳定
 gen_port() {
   local p
   local try=0
   local max_try=200
   while [[ $try -lt $max_try ]]; do
     ((try++))
-    if command -v shuf >/dev/null 2>&1; then 
-        p=$(shuf -i 10000-65535 -n 1)
-    elif command -v openssl >/dev/null 2>&1; then
-        local hex; hex=$(openssl rand -hex 2); p=$((16#$hex))
-    else 
-        p=$(( (RANDOM * 32768 + RANDOM) % 55536 + 10000 ))
-    fi
     
+    # 生成 10000 - 65535 之间的随机数
+    p=$(( (RANDOM * 32768 + RANDOM) % 55536 + 10000 ))
+    
+    # 校验范围
     [[ $p -lt 10000 || $p -gt 65535 ]] && continue
     
+    # 校验脚本内重复
     if [[ " ${PORTS[*]-} " == *" $p "* ]]; then continue; fi
+    
+    # 校验系统占用
     if is_port_occupied "$p"; then continue; fi
-    PORTS+=("$p"); echo "$p"; return;
+    
+    PORTS+=("$p"); echo "$p"; return 0;
   done
   die "严重错误：无法找到空闲端口，请检查服务器端口占用情况！"
 }
@@ -637,7 +645,6 @@ rotate_ports_action(){
   NEW_PORTS=($(get_current_port_values)); manage_firewall "allow" "${NEW_PORTS[@]}"
   systemctl restart "$SYSTEMD_SERVICE" 2>/dev/null || systemctl restart "$SYSTEMD_SERVICE"
   success "端口已更换"
-  # [Fix] 自动打印新的连接信息
   print_links
 }
 
@@ -693,7 +700,7 @@ ${C_CYAN}>> WARP 节点范例:${C_RESET}"
 }
 
 menu(){
-  clear; echo -e "${C_PURPLE}Sing-Box Manager (v4.7 Final)${C_RESET}"
+  clear; echo -e "${C_PURPLE}Sing-Box Manager (v4.8 Stability Fix)${C_RESET}"
   echo "1. 安装 / 重装 (v${SB_VERSION})"
   echo "2. 查看链接"
   echo "3. 更换端口 (含 443 检测)"
