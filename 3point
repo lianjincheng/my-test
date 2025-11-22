@@ -496,8 +496,8 @@ create_config_json() {
         "enabled": true,"padding": true,
         "brutal": {
           "enabled": true,
-          "up_mbps": 50,
-          "down_mbps": 1000
+          "up_mbps": 500,
+          "down_mbps": 60
         }
       }
     },
