@@ -483,7 +483,7 @@ create_config_json() {
       }
     },
     {
-      "type": "vless", "tag": "reality-smart", "listen": "0.0.0.0", "listen_port": ${REALITY_SMART_PORT},
+      "type": "vless", "tag": "reality-smart", "listen": "0.0.0.0", "listen_port": ${REALITY_SMART_PORT},"tcp_fast_open": true,
       "users": [ { "uuid": "${REALITY_SMART_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
@@ -493,7 +493,7 @@ create_config_json() {
         }
       },
     "multiplex": {
-        "enabled": true,
+        "enabled": true,"padding": true,
         "brutal": {
           "enabled": true,
           "up_mbps": 50,
