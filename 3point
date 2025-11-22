@@ -527,16 +527,20 @@ create_config_json() {
   ],
   "route": {
     "rules": [
-      { "protocol": "dns", "outbound": "dns-out" },
-      { "inbound": ["hy2-direct"], "outbound": "direct" },
       {
-        "inbound": ["hy2-smart", "reality-smart"],
-        "geoip": [ "CN" ],
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "inbound": "hy2-direct",
         "outbound": "direct"
       },
       {
-        "inbound": ["hy2-smart", "reality-smart"],
-        "domain_suffix": ["netflix.com","nflxvideo.net"],
+        "inbound": "reality-smart",
+        "outbound": "direct"
+      },
+      {
+        "inbound": "hy2-smart",
         "outbound": "warp-out"
       }
     ],
