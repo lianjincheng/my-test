@@ -104,66 +104,62 @@ apply_sysctl_optimizations() {
     
     cat <<EOF > "$sysctl_conf"
 # === Ultimate Optimization v9.0 ===
-# 1. BBR & FQ
+# 1. 核心拥塞控制与队列
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# 2. TCP Buffers (Max ~64MB, optimized for high bandwidth)
+# 2. TCP 巨型缓冲区 (64MB - 跑满 1Gbps 的关键)
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
 net.ipv4.tcp_rmem = 4096 87380 67108864
 net.ipv4.tcp_wmem = 4096 65536 67108864
+net.ipv4.tcp_window_scaling = 1  # 必须开启，否则64MB无效
 
-# 3. Virtual Memory
+# 3. 内存保护 (防止由大缓冲导致的 OOM)
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
 net.ipv4.tcp_moderate_rcvbuf = 1
 
-# 4. Network Optimizations
-net.ipv4.tcp_fastopen = 3
+# 4. 低延迟与握手优化
+net.ipv4.tcp_fastopen = 3        # 您测试过有效的 TFO
+net.ipv4.tcp_autocorking = 0     # 禁止凑包，即时发送
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_notsent_lowat = 16384 # 降低 Bufferbloat
+net.ipv4.tcp_ecn = 1
+
+# 5. 网络队列与并发 (理智数值)
 net.core.netdev_max_backlog = 32768
 net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
-net.ipv4.tcp_mtu_probing = 1
+net.core.rps_sock_flow_entries = 32768
+
+# 6. 连接稳定性与 MTU
+net.ipv4.tcp_mtu_probing = 1     # 双重保险，防止 4K 降级
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1
-net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_timestamps = 1
 
-# 5. Connection Tracking
+# 7. 连接保活 (10分钟)
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 5
 net.netfilter.nf_conntrack_max = 524288
 net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 
-# 6. File Descriptors
-fs.file-max = 1048576
-fs.nr_open = 1048576
-
-# 7. Disable IPv6 (System wide)
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
-
-# === Hy2 & Stability ===
+# 8. Hysteria 2 专项 (UDP 优化)
 net.ipv4.udp_mem = 65536 131072 262144
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
 
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_keepalive_probes = 5
+# 9. 系统基础限制
+fs.file-max = 1048576
+fs.nr_open = 1048576
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
 
-net.ipv4.tcp_timestamps = 1
-net.ipv4.tcp_ecn = 1
-
-# === Reality-friendly extras ===
-net.ipv4.tcp_no_metrics_save = 1
-net.ipv4.tcp_notsent_lowat = 16384
-
-# === Recommended netdev (avoid too aggressive) ===
-net.core.netdev_budget = 300
-net.core.netdev_budget_usecs = 8000
-
-# Optional safe items
-net.core.rps_sock_flow_entries = 32768
+# 10. 安全性
 net.ipv4.tcp_syncookies = 1
 EOF
 
