@@ -156,6 +156,7 @@ net.ipv4.tcp_ecn = 1
 
 # === Reality-friendly extras ===
 net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_notsent_lowat = 16384
 
 # === Recommended netdev (avoid too aggressive) ===
 net.core.netdev_budget = 300
