@@ -153,6 +153,13 @@ net.ipv4.tcp_keepalive_intvl = 15
 net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_timestamps = 1
+
+# === 补充优化: 禁用tcp brutal干扰参数 ===
+net.ipv4.tcp_autocorking = 0
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_notsent_lowat = 16384
+net.ipv4.tcp_ecn = 1
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
@@ -205,7 +212,7 @@ disable_ipv6_dhcp() {
 # --- [Main] ---
 main() { 
     clear
-    echo -e "${GREEN}=== VPS Performance Optimization (v9.0 Final) ===${NC}"
+    echo -e "${GREEN}=== VPS Performance Optimization (20251123) ===${NC}"
     check_root
     check_os
     update_and_install
