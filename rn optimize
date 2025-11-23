@@ -117,6 +117,7 @@ net.ipv4.tcp_wmem = 4096 65536 67108864
 # 3. Virtual Memory (Reduce Swapping)
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
+net.ipv4.tcp_moderate_rcvbuf = 1
 
 # 4. Network Optimizations
 net.ipv4.tcp_fastopen = 3
@@ -127,6 +128,8 @@ net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_notsent_lowat = 16384
 net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_dsack = 1
 
 # 5. Connection Tracking (Prevent dropping connections)
 net.netfilter.nf_conntrack_max = 1048576
