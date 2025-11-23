@@ -130,7 +130,7 @@ net.ipv4.tcp_dsack = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 
 # 5. Connection Tracking (Prevent dropping connections)
-net.netfilter.nf_conntrack_max = 262144
+net.netfilter.nf_conntrack_max = 1048576
 net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 
 # 6. File Descriptors
@@ -149,9 +149,9 @@ net.core.wmem_default = 262144
 net.ipv4.tcp_keepalive_time = 600
 net.ipv4.tcp_keepalive_intvl = 15
 net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_timestamps = 1
 net.ipv4.tcp_low_latency=0
+net.ipv4.tcp_ecn=1
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
