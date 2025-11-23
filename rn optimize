@@ -159,6 +159,7 @@ net.ipv4.tcp_autocorking = 0
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_ecn = 1
+net.ipv4.tcp_low_latency=0
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
