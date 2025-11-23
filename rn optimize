@@ -129,6 +129,7 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1
+net.ipv4.tcp_notsent_lowat = 16384
 
 # 5. Connection Tracking (Prevent dropping connections)
 net.netfilter.nf_conntrack_max = 1048576
