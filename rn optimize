@@ -104,7 +104,7 @@ apply_sysctl_optimizations() {
     
     cat <<EOF > "$sysctl_conf"
 # === Ultimate Optimization v9.3 (Clean) ===
-net.core.default_qdisc = cake
+net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
@@ -194,7 +194,7 @@ disable_ipv6_dhcp() {
 # --- [Main] ---
 main() { 
     clear
-    echo -e "${GREEN}=== VPS Performance Optimization (20251127cake) ===${NC}"
+    echo -e "${GREEN}=== VPS Performance Optimization (20251127) ===${NC}"
     check_root
     check_os
     update_and_install
