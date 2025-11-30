@@ -609,8 +609,8 @@ display_and_store_config_info() {
         qrencode_is_ready=true
     fi
 
-    echo -e "${MAGENTA}${BOLD}================== 智能分流组 (Smart Policy) ==================${NC}"
-    info "访问特定域名时走WARP，其他流量直连。"
+    echo -e "${MAGENTA}${BOLD}================== Warp解锁组 (Warp-Only) ==================${NC}"
+    info "全部流量走WARP，解锁流媒体。"
     echo -e "----------------------------------------------------"
     
     local HY2_SMART_LINK="hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&alpn=h3&insecure=1#Hy2-Smart-${LAST_SERVER_IP}"
@@ -619,15 +619,7 @@ display_and_store_config_info() {
     echo -e "密码: ${GREEN}${HY2_SMART_PASSWORD}${NC}"
     echo -e "${CYAN}导入链接:${NC} ${GREEN}${HY2_SMART_LINK}${NC}"
     if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${HY2_SMART_LINK}"; fi
-    echo -e "----------------------------------------------------"
 
-    local REALITY_DIRECT_LINK="vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&flow=xtls-rprx-vision&type=tcp#reality-direct-${LAST_SERVER_IP}"
-    echo -e "${GREEN}${BOLD} [智能] Reality 节点:${NC}"
-    echo -e "端口: ${GREEN}${REALITY_DIRECT_PORT}${NC}"
-    echo -e "UUID: ${GREEN}${REALITY_DIRECT_UUID}${NC}"
-    echo -e "${CYAN}导入链接:${NC} ${GREEN}${REALITY_DIRECT_LINK}${NC}"
-    if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${REALITY_DIRECT_LINK}"; fi
-    
     echo
     echo -e "${MAGENTA}${BOLD}================== 全局直连组 (Direct-Only) ==================${NC}"
     info "所有流量强制直连，适用于测试网络。"
@@ -639,6 +631,15 @@ display_and_store_config_info() {
     echo -e "密码: ${GREEN}${HY2_DIRECT_PASSWORD}${NC}"
     echo -e "${CYAN}导入链接:${NC} ${GREEN}${HY2_DIRECT_LINK}${NC}"
     if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${HY2_DIRECT_LINK}"; fi
+
+    echo -e "----------------------------------------------------"
+
+    local REALITY_DIRECT_LINK="vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&flow=xtls-rprx-vision&type=tcp#reality-direct-${LAST_SERVER_IP}"
+    echo -e "${GREEN}${BOLD} [智能] Reality 节点:${NC}"
+    echo -e "端口: ${GREEN}${REALITY_DIRECT_PORT}${NC}"
+    echo -e "UUID: ${GREEN}${REALITY_DIRECT_UUID}${NC}"
+    echo -e "${CYAN}导入链接:${NC} ${GREEN}${REALITY_DIRECT_LINK}${NC}"
+    if $qrencode_is_ready; then echo "二维码:"; qrencode -t ANSIUTF8 "${REALITY_DIRECT_LINK}"; fi
     echo -e "================================================================"
 
     save_persistent_info
