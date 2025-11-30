@@ -136,9 +136,9 @@ net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
 
 # --- UDP 内存水位 (Hysteria 专用保障) ---
-# 【修改】大幅提高 UDP 内存阈值，防止高并发时被内核限制
-# 单位是页(4KB)，这里大约是 set 256MB / 512MB / 1GB
-net.ipv4.udp_mem = 65536 131072 262144
+# 单位是页(4KB)
+# 64MB / 128MB / 256MB
+net.ipv4.udp_mem = 16384 32768 65536
 
 # --- 其他 ---
 vm.swappiness = 10
