@@ -103,45 +103,55 @@ apply_sysctl_optimizations() {
     local sysctl_conf="/etc/sysctl.d/99-proxy-optimizations.conf"
     
     cat <<EOF > "$sysctl_conf"
-# === Ultimate Optimization v9.3 (Clean) ===
+# === Ultimate Optimization v20251130 ===
+# --- 核心拥塞控制 ---
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
+
+# --- 全局缓冲区 (核心基础，Hysteria/UDP 主要看这里) ---
+# 既然调了，就给足。最大值 64MB，默认值 25MB
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
-net.ipv4.tcp_rmem = 4096 87380 67108864
-net.ipv4.tcp_wmem = 4096 65536 67108864
+net.core.rmem_default = 26214400
+net.core.wmem_default = 26214400
+
+# --- TCP 缓冲区 (Reality 专用优化) ---
+# 【关键修改】将中间值从 87380 提至 8MB，让 TCP 握手后立刻拥有大窗口
+# 格式：最小  默认(起步)  最大
+net.ipv4.tcp_rmem = 8192 8388608 67108864
+net.ipv4.tcp_wmem = 8192 8388608 67108864
+
+# --- TCP 行为微调 ---
 net.ipv4.tcp_window_scaling = 1
-vm.swappiness = 10
-vm.vfs_cache_pressure = 50
-net.ipv4.tcp_moderate_rcvbuf = 1
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_autocorking = 0
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_notsent_lowat = 16384
-net.ipv4.tcp_ecn = 1
+net.ipv4.tcp_ecn = 0  # 【修改】关闭 ECN 以防止国内运营商丢包
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+
+# --- 队列与并发 ---
 net.core.netdev_max_backlog = 32768
 net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
-net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_sack = 1
-net.ipv4.tcp_dsack = 1
-net.ipv4.tcp_timestamps = 1
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_keepalive_probes = 5
-net.netfilter.nf_conntrack_max = 524288
-net.netfilter.nf_conntrack_tcp_timeout_established = 7200
+
+# --- UDP 内存水位 (Hysteria 专用保障) ---
+# 【修改】大幅提高 UDP 内存阈值，防止高并发时被内核限制
+# 单位是页(4KB)，这里大约是 set 256MB / 512MB / 1GB
 net.ipv4.udp_mem = 65536 131072 262144
-net.core.rmem_default = 26214400
-net.core.wmem_default = 26214400
+
+# --- 其他 ---
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
 fs.file-max = 1048576
 fs.nr_open = 1048576
+net.ipv4.ip_local_port_range = 10240 65535
+
+# 保持你原有的 IPv6 设置
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
-net.ipv4.tcp_syncookies = 1
-net.ipv4.ip_local_port_range = 10240 65535
+
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
