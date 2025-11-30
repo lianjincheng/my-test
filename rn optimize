@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Ultimate VPS Performance Optimization Script (v9.0 - Final Production)
+# Ultimate VPS Performance Optimization Script (Final Production)
 #
 # Updates from v8.5:
 # 1. [Critical] Added Time Synchronization (NTP/Chrony) fix for Reality/TLS protocols.
@@ -103,7 +103,7 @@ apply_sysctl_optimizations() {
     local sysctl_conf="/etc/sysctl.d/99-proxy-optimizations.conf"
     
     cat <<EOF > "$sysctl_conf"
-# === Ultimate Optimization v20251130 ===
+# === Ultimate Optimization ===
 # --- 核心拥塞控制 ---
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -126,7 +126,7 @@ net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_notsent_lowat = 16384
-net.ipv4.tcp_ecn = 0  # 【修改】关闭 ECN 以防止国内运营商丢包
+net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_fastopen = 3
 
@@ -204,7 +204,7 @@ disable_ipv6_dhcp() {
 # --- [Main] ---
 main() { 
     clear
-    echo -e "${GREEN}=== VPS Performance Optimization (20251127) ===${NC}"
+    echo -e "${GREEN}=== VPS Performance Optimization (v20251130) ===${NC}"
     check_root
     check_os
     update_and_install
