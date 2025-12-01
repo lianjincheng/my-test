@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 (Obfs) & Reality Management (4-Node Final Version v3.4)
+# Script for Sing-Box Hysteria2 (Obfs) & Reality Management (4-Node Final Version v3.5)
 # Update Log:
-# - v3.4: Added WARP config reuse logic to prevent API rate limits.
+# - v3.5: Added JSON variable safety checks, Systemd pre-flight check, and LXC/OpenVZ compatibility.
+# - v3.4: Added WARP config reuse logic.
 # - v3.3: Added Auto-Firewall configuration.
-# - v3.2: Fixed system compat issues.
 
 # --- Author Information ---
-AUTHOR_NAME="singbox脚本 4-Node Final"
+AUTHOR_NAME="singbox脚本 4-Node Final Release"
 WEBSITE_URL=""
 TG_CHANNEL_URL=""
 TG_GROUP_URL=""
@@ -31,35 +31,23 @@ DEFAULT_REALITY_SNI="www.microsoft.com"
 # 全局 SINGBOX_CMD
 SINGBOX_CMD=""
 
-# --- 全局变量 ---
+# --- 全局变量初始化 ---
 LAST_SERVER_IP=""
-
-# [Hysteria2 通用配置]
-HY2_OBFS_PASSWORD="" # 混淆密码
-
-# [节点 1: Hy2 智能/WARP]
+HY2_OBFS_PASSWORD=""
 HY2_SMART_PORT=""
 HY2_SMART_PASSWORD=""
-
-# [节点 2: Reality 直连 (Port 443)]
 REALITY_DIRECT_PORT=""
 REALITY_DIRECT_UUID=""
 REALITY_DIRECT_PUBLIC_KEY=""
 REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG=""
 REALITY_DIRECT_SHORT_ID=""
-
-# [节点 3: Hy2 全局直连]
 HY2_DIRECT_PORT=""
 HY2_DIRECT_PASSWORD=""
-
-# [节点 4: Reality 智能/WARP (随机端口)]
 REALITY_WARP_PORT=""
 REALITY_WARP_UUID=""
 REALITY_WARP_PUBLIC_KEY=""
 REALITY_WARP_PRIVATE_KEY_FOR_CONFIG=""
 REALITY_WARP_SHORT_ID=""
-
-# WARP 配置
 WARP_PRIVATE_KEY=""
 WARP_PEER_PUBLIC_KEY=""
 WARP_ADDRESS=""
@@ -145,7 +133,6 @@ attempt_install_package() {
     local package_name="$1"
     local friendly_name="${2:-$package_name}"
 
-    # 在某些系统上，wireguard-tools的命令是wg，但包名不同
     if [[ "$package_name" == "wireguard-tools" ]] && command -v wg &>/dev/null; then
         return 0
     fi
@@ -164,7 +151,6 @@ attempt_install_package() {
     if command -v apt-get &>/dev/null; then
         apt-get update -y && apt-get install -y "$package_name"
     elif command -v yum &>/dev/null; then
-        # For CentOS/RHEL, wireguard-tools might be in EPEL repo
         if [[ "$package_name" == "wireguard-tools" ]]; then
             yum install -y epel-release && yum install -y wireguard-tools
         else
@@ -199,10 +185,10 @@ open_firewall_ports() {
     # 检测并使用 UFW (Ubuntu/Debian)
     if command -v ufw &>/dev/null && systemctl is-active --quiet ufw; then
         for port in "${ports[@]}"; do
-            ufw allow "$port"/tcp
-            ufw allow "$port"/udp
+            ufw allow "$port"/tcp >/dev/null 2>&1
+            ufw allow "$port"/udp >/dev/null 2>&1
         done
-        ufw reload
+        ufw reload >/dev/null 2>&1
         success "已通过 UFW 放行端口。"
         return
     fi
@@ -210,10 +196,10 @@ open_firewall_ports() {
     # 检测并使用 FirewallD (CentOS/RHEL)
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
         for port in "${ports[@]}"; do
-            firewall-cmd --permanent --add-port="$port"/tcp
-            firewall-cmd --permanent --add-port="$port"/udp
+            firewall-cmd --permanent --add-port="$port"/tcp >/dev/null 2>&1
+            firewall-cmd --permanent --add-port="$port"/udp >/dev/null 2>&1
         done
-        firewall-cmd --reload
+        firewall-cmd --reload >/dev/null 2>&1
         success "已通过 FirewallD 放行端口。"
         return
     fi
@@ -229,7 +215,7 @@ open_firewall_ports() {
             fi
         done
         if command -v netfilter-persistent &>/dev/null; then
-            netfilter-persistent save
+            netfilter-persistent save >/dev/null 2>&1
         elif [ -f /etc/redhat-release ]; then
             service iptables save 2>/dev/null || true
         fi
@@ -243,12 +229,14 @@ open_firewall_ports() {
 enable_ip_forwarding() {
     info "检查并开启 IPv4 转发..."
     if [ "$(sysctl -n net.ipv4.ip_forward)" -eq 0 ]; then
-        echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-singbox-forward.conf
-        sysctl -p /etc/sysctl.d/99-singbox-forward.conf >/dev/null
+        # 尝试写入，如果失败(如OpenVZ)则忽略错误继续
+        echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-singbox-forward.conf 2>/dev/null
+        sysctl -p /etc/sysctl.d/99-singbox-forward.conf >/dev/null 2>&1 || true
+        
         if [ "$(sysctl -n net.ipv4.ip_forward)" -eq 1 ]; then
             success "IPv4 转发已开启。"
         else
-            error "无法开启 IPv4 转发。WARP 模式可能无法正常工作。"
+            warn "尝试开启 IPv4 转发失败。如果这是容器环境(OpenVZ/LXC)，WARP 可能无法正常工作，但其他节点可用。"
         fi
     else
         success "IPv4 转发已开启。"
@@ -413,8 +401,7 @@ install_singbox_core() {
     return 0
 }
 
-# --- [心脏移植手术] ---
-# 全新的、更可靠的 WARP 配置函数 (含复用逻辑)
+# --- WARP 配置函数 ---
 setup_warp() {
     # 尝试复用现有配置
     if [ -n "$WARP_PRIVATE_KEY" ] && [ -n "$WARP_PEER_PUBLIC_KEY" ] && [ -n "$WARP_ADDRESS" ]; then
@@ -565,6 +552,12 @@ create_config_json() {
     info "正在生成四节点 (包含 Hy2混淆 & Reality-Warp) 混合策略配置文件..."
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
+    # [安全检查] 确保 WARP_RESERVED 不为空，否则设置默认值防止 JSON 语法错误
+    if [ -z "$WARP_RESERVED" ]; then
+        warn "检测到 WARP_RESERVED 为空，使用默认值 [0,0,0]..."
+        WARP_RESERVED="[0,0,0]"
+    fi
+
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -709,12 +702,25 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable sing-box
-    success "Systemd 服务已创建并设置为开机自启。"
+    # 检测 Systemd 是否可用
+    if pidof systemd >/dev/null || [ -e /run/systemd/system ]; then
+        systemctl daemon-reload
+        systemctl enable sing-box
+        success "Systemd 服务已创建并设置为开机自启。"
+    else
+        warn "未检测到 Systemd (可能是 Docker 或简单容器环境)。"
+        warn "服务文件已创建，但无法自动启用。您可能需要手动运行: ${SINGBOX_CMD} run -c ${SINGBOX_CONFIG_FILE}"
+    fi
 }
 
 start_singbox_service() {
+    # 如果 Systemd 不可用，尝试前台运行测试
+    if ! pidof systemd >/dev/null && ! [ -e /run/systemd/system ]; then
+        warn "由于没有 Systemd，正在尝试前台启动测试 (按 Ctrl+C 停止)..."
+        $SINGBOX_CMD run -c "$SINGBOX_CONFIG_FILE"
+        return 0
+    fi
+
     info "正在启动 Sing-box 服务..."
     systemctl restart sing-box
     sleep 2
@@ -856,14 +862,17 @@ uninstall_singbox() {
     fi
 
     info "正在停止 sing-box 服务..."
-    systemctl stop sing-box &>/dev/null
-    info "正在禁用 sing-box 服务..."
-    systemctl disable sing-box &>/dev/null
+    if command -v systemctl &>/dev/null; then
+        systemctl stop sing-box &>/dev/null
+        systemctl disable sing-box &>/dev/null
+    fi
 
     if [ -f "$SINGBOX_SERVICE_FILE" ]; then
         info "正在删除 systemd 服务文件: ${SINGBOX_SERVICE_FILE}"
         rm -f "$SINGBOX_SERVICE_FILE"
-        systemctl daemon-reload
+        if command -v systemctl &>/dev/null; then
+             systemctl daemon-reload
+        fi
     fi
 
     find_and_set_singbox_cmd
@@ -927,18 +936,27 @@ manage_singbox() {
                     success "配置文件检查通过。"
                 fi
             fi
-            systemctl "$action" sing-box
-            if [[ "$action" != "status" ]]; then sleep 1; fi
-            if systemctl is-active --quiet sing-box; then
-                success "操作成功，服务正在运行。"
-            elif [[ "$action" == "stop" ]]; then
-                 success "操作成功，服务已停止。"
+            
+            if command -v systemctl &>/dev/null; then
+                systemctl "$action" sing-box
+                if [[ "$action" != "status" ]]; then sleep 1; fi
+                if systemctl is-active --quiet sing-box; then
+                    success "操作成功，服务正在运行。"
+                elif [[ "$action" == "stop" ]]; then
+                     success "操作成功，服务已停止。"
+                else
+                    warn "操作可能未成功或服务未运行。"
+                fi
             else
-                warn "操作可能未成功或服务未运行。"
+                warn "Systemd 不可用，无法执行服务管理命令。"
             fi
             ;;
         log)
-            journalctl -u sing-box -f --no-pager -n 50
+            if command -v journalctl &>/dev/null; then
+                journalctl -u sing-box -f --no-pager -n 50
+            else
+                warn "Journalctl 不可用。"
+            fi
             ;;
         view_config)
             if [ -f "$SINGBOX_CONFIG_FILE" ]; then
