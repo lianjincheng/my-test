@@ -4,7 +4,6 @@
 # Update Log:
 # - v3.5: Added JSON variable safety checks, Systemd pre-flight check, and LXC/OpenVZ compatibility.
 # - v3.4: Added WARP config reuse logic.
-# - v3.3: Added Auto-Firewall configuration.
 
 # --- Author Information ---
 AUTHOR_NAME="singbox脚本 4-Node Final Release"
@@ -175,55 +174,6 @@ attempt_install_package() {
         error "'${friendly_name}' 安装失败。请检查错误信息并尝试手动安装。"
         return 1
     fi
-}
-
-# --- 防火墙配置函数 ---
-open_firewall_ports() {
-    local ports=("$@")
-    info "正在配置防火墙放行端口: ${ports[*]} ..."
-
-    # 检测并使用 UFW (Ubuntu/Debian)
-    if command -v ufw &>/dev/null && systemctl is-active --quiet ufw; then
-        for port in "${ports[@]}"; do
-            ufw allow "$port"/tcp >/dev/null 2>&1
-            ufw allow "$port"/udp >/dev/null 2>&1
-        done
-        ufw reload >/dev/null 2>&1
-        success "已通过 UFW 放行端口。"
-        return
-    fi
-
-    # 检测并使用 FirewallD (CentOS/RHEL)
-    if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
-        for port in "${ports[@]}"; do
-            firewall-cmd --permanent --add-port="$port"/tcp >/dev/null 2>&1
-            firewall-cmd --permanent --add-port="$port"/udp >/dev/null 2>&1
-        done
-        firewall-cmd --reload >/dev/null 2>&1
-        success "已通过 FirewallD 放行端口。"
-        return
-    fi
-
-    # 检测并使用 Iptables (通用)
-    if command -v iptables &>/dev/null; then
-        for port in "${ports[@]}"; do
-            if ! iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
-                iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
-            fi
-            if ! iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null; then
-                iptables -I INPUT -p udp --dport "$port" -j ACCEPT
-            fi
-        done
-        if command -v netfilter-persistent &>/dev/null; then
-            netfilter-persistent save >/dev/null 2>&1
-        elif [ -f /etc/redhat-release ]; then
-            service iptables save 2>/dev/null || true
-        fi
-        success "已通过 Iptables 放行端口。"
-        return
-    fi
-    
-    warn "未检测到活跃的防火墙服务或无法自动配置。请确保您的云服务商防火墙已放行上述端口。"
 }
 
 enable_ip_forwarding() {
@@ -824,9 +774,6 @@ install_all_nodes() {
     HY2_DIRECT_PORT=${random_ports[1]}
     REALITY_WARP_PORT=${random_ports[2]}
     success "已生成 3 个独立端口: ${random_ports[*]}"
-
-    # 放行防火墙 (包含443和生成的随机端口)
-    open_firewall_ports 443 "${random_ports[@]}"
 
     info "正在为 Reality (直连) 节点生成凭证..."
     generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID || return 1
