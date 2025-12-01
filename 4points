@@ -534,8 +534,7 @@ create_config_json() {
     },
     {
       "type": "vless", "tag": "reality-direct", "listen": "0.0.0.0", "listen_port": ${REALITY_DIRECT_PORT},
-      "multiplex": {"enabled":true,"brutal": {"enabled": true,"up_mbps": 1000,"down_mbps": 1000}},
-      "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "" } ],
+      "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
         "reality": {
@@ -557,8 +556,7 @@ create_config_json() {
     },
     {
       "type": "vless", "tag": "reality-warp", "listen": "0.0.0.0", "listen_port": ${REALITY_WARP_PORT},
-      "multiplex": {"enabled":true,"brutal": {"enabled": true,"up_mbps": 1000,"down_mbps": 1000}},
-      "users": [ { "uuid": "${REALITY_WARP_UUID}", "flow": "" } ],
+      "users": [ { "uuid": "${REALITY_WARP_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
         "reality": {
