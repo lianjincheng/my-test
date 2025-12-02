@@ -25,7 +25,7 @@ PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
 
 # 默认值
 DEFAULT_HYSTERIA_MASQUERADE_CN="www.bing.com"
-DEFAULT_REALITY_SNI="www.microsoft.com"
+DEFAULT_REALITY_SNI="itunes.apple.com"
 
 # 全局 SINGBOX_CMD
 SINGBOX_CMD=""
