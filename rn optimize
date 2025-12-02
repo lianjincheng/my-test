@@ -109,17 +109,16 @@ net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
 # --- 全局缓冲区 (核心基础，Hysteria/UDP 主要看这里) ---
-# 既然调了，就给足。最大值 64MB，默认值 25MB
+# 默认值改为 256KB (足够大了)，最大值保持 64MB 以备不时之需
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
-net.core.rmem_default = 26214400
-net.core.wmem_default = 26214400
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
 
 # --- TCP 缓冲区 (Reality 专用优化) ---
-# 【关键修改】将中间值从 87380 提至 8MB，让 TCP 握手后立刻拥有大窗口
-# 格式：最小  默认(起步)  最大
-net.ipv4.tcp_rmem = 8192 8388608 67108864
-net.ipv4.tcp_wmem = 8192 8388608 67108864
+# 让 TCP 从小窗口开始，通过 BBR 自己去探测天花板，而不是硬塞
+net.ipv4.tcp_rmem = 8192 262144 67108864
+net.ipv4.tcp_wmem = 8192 262144 67108864
 
 # --- TCP 行为微调 ---
 net.ipv4.tcp_window_scaling = 1
