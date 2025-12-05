@@ -286,7 +286,7 @@ create_config_json() {
   "outbounds": [
     {
       "type": "wireguard", "tag": "warp-out",
-      "local_address": [ "${WARP_ADDRESS}" ],
+      "local_address": [ "${WARP_ADDRESS}/32" ],
       "private_key": "${WARP_PRIVATE_KEY}", "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
       "server": "162.159.192.1", "server_port": 2408, "reserved": ${WARP_RESERVED}
     },
