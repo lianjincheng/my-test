@@ -4,8 +4,7 @@
 # Based on Sing-box 1.8.0
 
 # --- Author Information ---
-AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Enhanced Debug)"
-WEBSITE_URL=""
+AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Manual Firewall & Strict Checks)"
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -124,7 +123,6 @@ attempt_install_package() {
         exit 1
     fi
 
-    # 安装后检查
     if ! command -v "$package_name" &>/dev/null; then
         error "依赖 $package_name 安装失败！"
         exit 1
@@ -142,8 +140,6 @@ find_and_set_singbox_cmd() {
     if [ -x "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then
         SINGBOX_CMD="$SINGBOX_INSTALL_PATH_EXPECTED"
     else
-        # 即使找不到，如果不在这里报错，后续用到 SINGBOX_CMD 的地方会出问题
-        # 但如果是初次安装，这里找不到是正常的，所以仅赋值
         SINGBOX_CMD=""
     fi
 }
@@ -188,29 +184,63 @@ install_cloudflared() {
 }
 
 start_argo_tunnel() {
-    # 确保 Cloudflared 已停止
     pkill -f cloudflared
-    
     info "正在启动 Argo 临时隧道 (端口转发: $ARGO_PORT)..."
     
-    # 移除 --protocol http2，让其自动选择 (Auto)
-    # 增加日志重定向，方便排查
+    # 清空旧日志，确保检测的准确性
+    echo "" > "$ARGO_LOG_FILE"
+
+    # 启动命令：移除 http2，使用 Auto
     nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > "$ARGO_LOG_FILE" 2>&1 &
     
+    # 稍微等一下进程启动
+    sleep 2
     if ! pgrep -f cloudflared > /dev/null; then
-        error "Cloudflared 启动失败！请检查日志。"
-        warn "尝试输出日志内容:"
+        error "Cloudflared 进程启动失败！"
         cat "$ARGO_LOG_FILE"
-        # 这里不退出，因为可能是暂时性的，让它继续跑流程
+        return 1
     fi
 
     # 添加到 Crontab 实现开机自启
     local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > $ARGO_LOG_FILE 2>&1 &"
-    
     (crontab -l 2>/dev/null | grep -v "cloudflared") | crontab -
     (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
+}
+
+# --- 新增：等待 Argo 隧道连接成功 ---
+wait_for_argo_connection() {
+    info "正在验证 Argo 隧道连通性 (最多等待 30 秒)..."
+    local timeout=30
+    local elapsed=0
     
-    success "Argo 隧道后台启动中，并已添加开机自启。"
+    while [ $elapsed -lt $timeout ]; do
+        # 检查日志中是否有成功标志
+        # "Registered tunnel connection" 是 Cloudflare 隧道建立成功的标准日志
+        if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
+            success "Argo 隧道已成功建立！"
+            return 0
+        fi
+        
+        # 检查进程是否还活着
+        if ! pgrep -f cloudflared > /dev/null; then
+            error "检测到 Cloudflared 进程意外退出！"
+            return 1
+        fi
+        
+        sleep 1
+        ((elapsed++))
+        # 打印进度点，让用户知道没卡死
+        echo -ne "."
+    done
+    
+    echo ""
+    error "Argo 隧道启动超时 (30秒内未连接成功)。"
+    warn "以下是 Argo 日志的最后 10 行，请检查错误原因："
+    echo "------------------------------------------------"
+    tail -n 10 "$ARGO_LOG_FILE"
+    echo "------------------------------------------------"
+    warn "常见原因：IP 被 Cloudflare 限制、网络不通、或 Cloudflare 服务抖动。"
+    return 1
 }
 
 install_singbox_core() {
@@ -232,7 +262,6 @@ install_singbox_core() {
     local download_url="https://github.com/SagerNet/sing-box/releases/download/${target_version}/sing-box-${version_num}-linux-${ARCH}.tar.gz"
     
     local tmp_dir=$(mktemp -d)
-    info "下载 Sing-box: $download_url"
     if ! curl -L -o "${tmp_dir}/sing-box.tar.gz" "$download_url"; then
         error "Sing-box 下载失败！请检查网络。"
         rm -rf "$tmp_dir"
@@ -262,12 +291,12 @@ setup_warp() {
     
     WARP_PRIVATE_KEY="$PRIV"
     WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
-    # 修复：增加 sed 处理，防止 API 返回的 IP 自带 /32 导致后续配置出错
+    # 关键修复：Sed 去掉 /32
     WARP_ADDRESS=$(echo "$RESP" | jq -r '.config.interface.addresses.v4' | sed 's/\/.*//g')
     WARP_RESERVED="[0,0,0]"
 
     if [[ -z "$WARP_ADDRESS" || "$WARP_ADDRESS" == "null" ]]; then
-        error "WARP 注册失败，无法获取 IP 地址。请检查网络或 Cloudflare API 连接。"
+        error "WARP 注册失败，无法获取 IP 地址。"
         exit 1
     fi
 }
@@ -292,7 +321,7 @@ create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
-    # 注意：WARP 地址在这里手动补充 /32
+    # WARP 地址手动加 /32
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -340,6 +369,7 @@ create_config_json() {
       { "inbound": "hy2-smart", "outbound": "warp-out" }
     ]
   }
+}
 EOF
 }
 
@@ -360,9 +390,7 @@ EOF
     systemctl enable sing-box
 }
 
-# --- 核心修改：节点展示函数 ---
 display_and_store_config_info() {
-    # 1. 常规节点信息
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 1. [智能] Hysteria2 (WARP出站)${NC}"
     echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#Hy2-Smart"
@@ -374,9 +402,8 @@ display_and_store_config_info() {
     echo -e "    hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#Hy2-Direct"
     echo
     
-    # 2. Argo 临时隧道信息
     echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
-    info "正在从日志文件 ($ARGO_LOG_FILE) 抓取最新域名..."
+    info "正在从日志文件抓取域名..."
     
     local ARGO_DOMAIN=""
     if [ -f "$ARGO_LOG_FILE" ]; then
@@ -388,24 +415,18 @@ display_and_store_config_info() {
         echo -e "${YELLOW}说明: 以下生成 13 个优选域名节点 (yg1 - yg13)${NC}"
         echo
         
-        # 批量生成 13 个节点
         local base_domain="ygkkk.dpdns.org"
         for i in {1..13}; do
             local current_cf_ip="yg${i}.${base_domain}"
             local node_name="Argo-YG${i}"
-            
-            # 组装链接
             local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}#${node_name}"
             
             echo -e "${GREEN} [Argo] 优选节点 ${i} (${current_cf_ip})${NC}"
             echo -e "    ${argo_link}"
-            echo
         done
-
     else
-        error "无法获取 Argo 域名。"
-        warn "隧道可能启动失败。"
-        warn "请运行 'cat $ARGO_LOG_FILE' 查看详细报错。"
+        error "无法获取 Argo 域名 (虽然隧道已连接)。"
+        warn "请运行 'cat $ARGO_LOG_FILE' 查看详情。"
     fi
     
     echo -e "${MAGENTA}====================================================${NC}"
@@ -429,50 +450,55 @@ install_all_nodes() {
     HY2_DIRECT_PORT=$(shuf -i 10000-65535 -n 1)
     ARGO_PORT=$(shuf -i 10000-65535 -n 1)
     
-    # 密码生成
+    # 生成密码
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
-    
-    # Reality 凭证
     generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID
     generate_self_signed_cert
 
-    # 创建配置
+    # 1. 创建配置
     create_config_json
     
-    # --- 新增：配置文件语法检查 ---
+    # 2. 配置文件语法检查
     info "正在检查配置文件语法..."
     if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
-        error "配置文件 (config.json) 语法检查失败！"
-        error "请检查上方错误输出。脚本停止执行，避免服务崩溃。"
+        error "配置文件语法检查失败！"
         exit 1
     fi
-    success "配置文件语法检查通过。"
 
-    # 启动服务
+    # 3. 启动 Sing-box 服务 (核心)
     create_systemd_service
     systemctl restart sing-box
 
-    # --- 新增：服务启动状态检查 ---
     sleep 2
     if ! systemctl is-active --quiet sing-box; then
         error "Sing-box 服务启动失败！"
-        warn "以下是系统日志 (最后 20 行):"
-        echo "------------------------------------------------"
         journalctl -u sing-box --no-pager -n 20
-        echo "------------------------------------------------"
         exit 1
     else
         success "Sing-box 服务已成功启动。"
     fi
     
-    # 启动 Argo 隧道
+    # 4. 启动 Argo 隧道
     start_argo_tunnel
-
-    success "安装完成！请等待 5-10 秒让 Argo 隧道建立连接..."
-    sleep 8
-    display_and_store_config_info
+    
+    # 5. 验证 Argo 连通性 (必须连通才往下走)
+    if wait_for_argo_connection; then
+        # 6. 显示节点信息
+        display_and_store_config_info
+    else
+        # 失败处理
+        error "Argo 隧道建立失败，跳过节点展示。"
+    fi
+    
+    # 提醒用户手动放行端口
+    echo
+    echo -e "${YELLOW}[重要提醒] 请手动在防火墙放行以下端口：${NC}"
+    echo -e "   Reality TCP: ${REALITY_DIRECT_PORT}"
+    echo -e "   Hy2 UDP: ${HY2_SMART_PORT}"
+    echo -e "   Hy2 UDP: ${HY2_DIRECT_PORT}"
+    echo
 }
 
 uninstall_singbox() {
@@ -484,10 +510,8 @@ uninstall_singbox() {
         rm -rf "$SINGBOX_CONFIG_DIR"
         rm -rf "$HYSTERIA_CERT_DIR"
         
-        # 清理 Argo
         info "清理 Cloudflared..."
         pkill -f cloudflared
-        # 清理 Crontab
         (crontab -l | grep -v "cloudflared") | crontab -
         rm -f "$CLOUDFLARED_PATH"
         
@@ -495,12 +519,10 @@ uninstall_singbox() {
     fi
 }
 
-# --- 菜单逻辑 ---
 show_menu() {
     clear
     print_author_info
     echo "1. 安装/重置 所有节点 (Hy2 + Reality + Argo)"
-    echo "-------------------------------------"
     echo "2. 查看节点链接 (含 Argo 域名刷新)"
     echo "3. 重启 Sing-box 服务"
     echo "4. 卸载"
@@ -517,7 +539,6 @@ show_menu() {
     read -p "按回车继续..."
 }
 
-# --- 入口 ---
 check_root
 check_dependencies
 find_and_set_singbox_cmd
