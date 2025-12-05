@@ -4,7 +4,7 @@
 # Based on Sing-box 1.8.0
 
 # --- Author Information ---
-AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Hy2 Obfs + Strict Checks)"
+AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Pure IPv4 Ultimate)"
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -38,7 +38,7 @@ HY2_SMART_PASSWORD=""
 # 全局直连组
 HY2_DIRECT_PORT=""
 HY2_DIRECT_PASSWORD=""
-# Hy2 混淆密码 (新增)
+# Hy2 混淆密码
 HY2_OBFS_PASSWORD=""
 
 REALITY_DIRECT_PORT=""
@@ -50,7 +50,7 @@ REALITY_DIRECT_SHORT_ID=""
 # Argo 组
 ARGO_PORT=""
 ARGO_UUID=""
-ARGO_PATH="/argo" # WebSocket 路径
+ARGO_PATH="/argo" 
 # WARP 配置
 WARP_PRIVATE_KEY=""
 WARP_PEER_PUBLIC_KEY=""
@@ -75,7 +75,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
-    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (Hy2 + Reality + Argo) ${NC}"
+    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (纯 IPv4 极速版) ${NC}"
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
 }
 
@@ -114,19 +114,16 @@ check_root() {
     fi
 }
 
-# --- 核心修复：软件包名与命令名映射 ---
 attempt_install_package() {
     local package_name="$1"
     local check_cmd="$package_name"
 
-    # 特殊映射：当软件包名和命令名不一致时
     if [[ "$package_name" == "wireguard-tools" ]]; then
         check_cmd="wg"
     elif [[ "$package_name" == "cron" ]]; then
         check_cmd="crontab"
     fi
 
-    # 1. 先检查命令是否存在
     if command -v "$check_cmd" &>/dev/null; then 
         return 0
     fi
@@ -141,7 +138,6 @@ attempt_install_package() {
         exit 1
     fi
 
-    # 2. 安装后再次检查命令
     if ! command -v "$check_cmd" &>/dev/null; then
         error "依赖 $package_name 安装失败！(未找到命令: $check_cmd)"
         exit 1
@@ -164,6 +160,7 @@ find_and_set_singbox_cmd() {
 }
 
 get_server_ip() {
+    # 强制 IPv4 (-s4)
     SERVER_IP=$(curl -s4 https://api.ipify.org || curl -s4 ip.sb)
     if [ -z "$SERVER_IP" ]; then
         error "无法获取服务器 IP，请检查网络连接。"
@@ -190,7 +187,8 @@ install_cloudflared() {
     esac
     
     local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-    curl -L -o "$CLOUDFLARED_PATH" "$URL"
+    # 强制 IPv4 下载
+    (command -v curl>/dev/null 2>&1 && curl -4 -L -o "$CLOUDFLARED_PATH" "$URL") || (command -v wget>/dev/null 2>&1 && wget -4 -O "$CLOUDFLARED_PATH" "$URL")
     
     if [ ! -f "$CLOUDFLARED_PATH" ]; then
         error "Cloudflared 下载失败，文件不存在。"
@@ -207,6 +205,8 @@ start_argo_tunnel() {
     
     echo "" > "$ARGO_LOG_FILE"
 
+    # 1. 禁用 IPv6 (--edge-ip-version 4)
+    # 2. 启用 HTTP2 (--protocol http2)
     nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 > "$ARGO_LOG_FILE" 2>&1 &
     
     sleep 2
@@ -271,7 +271,8 @@ install_singbox_core() {
     local download_url="https://github.com/SagerNet/sing-box/releases/download/${target_version}/sing-box-${version_num}-linux-${ARCH}.tar.gz"
     
     local tmp_dir=$(mktemp -d)
-    if ! curl -L -o "${tmp_dir}/sing-box.tar.gz" "$download_url"; then
+    # 强制 IPv4 下载 (-4)
+    if ! curl -4 -L -o "${tmp_dir}/sing-box.tar.gz" "$download_url"; then
         error "Sing-box 下载失败！请检查网络。"
         rm -rf "$tmp_dir"
         exit 1
@@ -291,14 +292,13 @@ install_singbox_core() {
 setup_warp() {
     if [ -n "$WARP_PRIVATE_KEY" ]; then return 0; fi
     info "配置 WARP..."
-    
-    # 这里会调用修复后的 check 函数
     attempt_install_package "wireguard-tools"
     attempt_install_package "jq"
     
     local PRIV=$(wg genkey)
     local PUB=$(echo "$PRIV" | wg pubkey)
-    local RESP=$(curl -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
+    # 强制 IPv4 注册 (-4)
+    local RESP=$(curl -4 -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
     
     WARP_PRIVATE_KEY="$PRIV"
     WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
@@ -331,10 +331,11 @@ create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
-    # --- 终极 IPv4 优化版配置 ---
-    # 1. global dns strategy: ipv4_only
-    # 2. direct outbound: ipv4_only
-    # 3. warp outbound: ipv4_only
+    # --- 终极 IPv4 纯净版配置 ---
+    # 1. listen: 0.0.0.0 (只监听 IPv4)
+    # 2. dns strategy: ipv4_only
+    # 3. outbounds strategy: ipv4_only
+    
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -346,13 +347,19 @@ create_config_json() {
   },
   "inbounds": [
     {
-      "type": "hysteria2", "tag": "hy2-smart", "listen": "::", "listen_port": ${HY2_SMART_PORT},
+      "type": "hysteria2", 
+      "tag": "hy2-smart", 
+      "listen": "0.0.0.0", 
+      "listen_port": ${HY2_SMART_PORT},
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
-      "type": "vless", "tag": "reality-direct", "listen": "::", "listen_port": ${REALITY_DIRECT_PORT},
+      "type": "vless", 
+      "tag": "reality-direct", 
+      "listen": "0.0.0.0", 
+      "listen_port": ${REALITY_DIRECT_PORT},
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
@@ -360,13 +367,19 @@ create_config_json() {
       }
     },
     {
-      "type": "hysteria2", "tag": "hy2-direct", "listen": "::", "listen_port": ${HY2_DIRECT_PORT},
+      "type": "hysteria2", 
+      "tag": "hy2-direct", 
+      "listen": "0.0.0.0", 
+      "listen_port": ${HY2_DIRECT_PORT},
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
-      "type": "vless", "tag": "vless-argo", "listen": "127.0.0.1", "listen_port": ${ARGO_PORT},
+      "type": "vless", 
+      "tag": "vless-argo", 
+      "listen": "127.0.0.1", 
+      "listen_port": ${ARGO_PORT},
       "users": [ { "uuid": "${ARGO_UUID}" } ],
       "transport": { "type": "ws", "path": "${ARGO_PATH}" }
     }
@@ -481,7 +494,7 @@ install_all_nodes() {
     
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
-    HY2_OBFS_PASSWORD=$(generate_random_password) # 新增：生成混淆密码
+    HY2_OBFS_PASSWORD=$(generate_random_password)
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
     generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID
     generate_self_signed_cert
