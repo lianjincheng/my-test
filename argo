@@ -4,7 +4,7 @@
 # Based on Sing-box 1.8.0
 
 # --- Author Information ---
-AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Fix Dependency Check)"
+AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Hy2 Obfs + Strict Checks)"
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -35,15 +35,19 @@ LAST_SERVER_IP=""
 # 智能分流组
 HY2_SMART_PORT=""
 HY2_SMART_PASSWORD=""
+# 全局直连组
+HY2_DIRECT_PORT=""
+HY2_DIRECT_PASSWORD=""
+# Hy2 混淆密码 (新增)
+HY2_OBFS_PASSWORD=""
+
 REALITY_DIRECT_PORT=""
 REALITY_DIRECT_UUID=""
 REALITY_DIRECT_PUBLIC_KEY=""
 REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG=""
 REALITY_DIRECT_SHORT_ID=""
-# 全局直连组
-HY2_DIRECT_PORT=""
-HY2_DIRECT_PASSWORD=""
-# Argo 组 (新增)
+
+# Argo 组
 ARGO_PORT=""
 ARGO_UUID=""
 ARGO_PATH="/argo" # WebSocket 路径
@@ -87,6 +91,7 @@ save_persistent_info() {
 LAST_SERVER_IP="${LAST_SERVER_IP}"
 HY2_SMART_PORT="${HY2_SMART_PORT}"
 HY2_SMART_PASSWORD="${HY2_SMART_PASSWORD}"
+HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
 REALITY_DIRECT_PORT="${REALITY_DIRECT_PORT}"
 REALITY_DIRECT_UUID="${REALITY_DIRECT_UUID}"
 REALITY_DIRECT_PUBLIC_KEY="${REALITY_DIRECT_PUBLIC_KEY}"
@@ -326,6 +331,7 @@ create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
+    # 新增 obfs 配置
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -333,7 +339,8 @@ create_config_json() {
     {
       "type": "hysteria2", "tag": "hy2-smart", "listen": "::", "listen_port": ${HY2_SMART_PORT},
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
-      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" }
+      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
+      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
       "type": "vless", "tag": "reality-direct", "listen": "::", "listen_port": ${REALITY_DIRECT_PORT},
@@ -346,7 +353,8 @@ create_config_json() {
     {
       "type": "hysteria2", "tag": "hy2-direct", "listen": "::", "listen_port": ${HY2_DIRECT_PORT},
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
-      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" }
+      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
+      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
       "type": "vless", "tag": "vless-argo", "listen": "127.0.0.1", "listen_port": ${ARGO_PORT},
@@ -397,13 +405,13 @@ EOF
 display_and_store_config_info() {
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 1. [智能] Hysteria2 (WARP出站)${NC}"
-    echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#Hy2-Smart"
+    echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Smart"
     echo
     echo -e "${GREEN} 2. [直连] Reality (TCP-Vision)${NC}"
     echo -e "    vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Reality-Direct"
     echo
     echo -e "${GREEN} 3. [直连] Hysteria2 (备用)${NC}"
-    echo -e "    hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1#Hy2-Direct"
+    echo -e "    hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Direct"
     echo
     
     echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
@@ -455,6 +463,7 @@ install_all_nodes() {
     
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
+    HY2_OBFS_PASSWORD=$(generate_random_password) # 新增：生成混淆密码
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
     generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID
     generate_self_signed_cert
