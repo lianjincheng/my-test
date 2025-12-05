@@ -344,9 +344,6 @@ create_config_json() {
       { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
     ],
     "strategy": "ipv4_only","independent_cache": true,"final": "cloudflare",
-    "rules": [
-      { "outbound": "any", "server": "cloudflare" }
-    ]
   },
   "inbounds": [
     {
