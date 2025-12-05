@@ -4,7 +4,7 @@
 # Based on Sing-box 1.8.0
 
 # --- Author Information ---
-AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Manual Firewall & Strict Checks)"
+AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Fix Dependency Check)"
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -109,9 +109,22 @@ check_root() {
     fi
 }
 
+# --- 核心修复：软件包名与命令名映射 ---
 attempt_install_package() {
     local package_name="$1"
-    if command -v "$package_name" &>/dev/null; then return 0; fi
+    local check_cmd="$package_name"
+
+    # 特殊映射：当软件包名和命令名不一致时
+    if [[ "$package_name" == "wireguard-tools" ]]; then
+        check_cmd="wg"
+    elif [[ "$package_name" == "cron" ]]; then
+        check_cmd="crontab"
+    fi
+
+    # 1. 先检查命令是否存在
+    if command -v "$check_cmd" &>/dev/null; then 
+        return 0
+    fi
     
     info "正在安装依赖: $package_name ..."
     if command -v apt-get &>/dev/null; then
@@ -123,8 +136,9 @@ attempt_install_package() {
         exit 1
     fi
 
-    if ! command -v "$package_name" &>/dev/null; then
-        error "依赖 $package_name 安装失败！"
+    # 2. 安装后再次检查命令
+    if ! command -v "$check_cmd" &>/dev/null; then
+        error "依赖 $package_name 安装失败！(未找到命令: $check_cmd)"
         exit 1
     fi
 }
@@ -157,7 +171,6 @@ generate_random_password() {
     openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16
 }
 
-# --- Cloudflared 安装与管理 ---
 install_cloudflared() {
     if [ -f "$CLOUDFLARED_PATH" ]; then
         info "Cloudflared 已安装。"
@@ -187,13 +200,10 @@ start_argo_tunnel() {
     pkill -f cloudflared
     info "正在启动 Argo 临时隧道 (端口转发: $ARGO_PORT)..."
     
-    # 清空旧日志，确保检测的准确性
     echo "" > "$ARGO_LOG_FILE"
 
-    # 启动命令：移除 http2，使用 Auto
     nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > "$ARGO_LOG_FILE" 2>&1 &
     
-    # 稍微等一下进程启动
     sleep 2
     if ! pgrep -f cloudflared > /dev/null; then
         error "Cloudflared 进程启动失败！"
@@ -201,27 +211,22 @@ start_argo_tunnel() {
         return 1
     fi
 
-    # 添加到 Crontab 实现开机自启
     local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > $ARGO_LOG_FILE 2>&1 &"
     (crontab -l 2>/dev/null | grep -v "cloudflared") | crontab -
     (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
 }
 
-# --- 新增：等待 Argo 隧道连接成功 ---
 wait_for_argo_connection() {
     info "正在验证 Argo 隧道连通性 (最多等待 30 秒)..."
     local timeout=30
     local elapsed=0
     
     while [ $elapsed -lt $timeout ]; do
-        # 检查日志中是否有成功标志
-        # "Registered tunnel connection" 是 Cloudflare 隧道建立成功的标准日志
         if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
             success "Argo 隧道已成功建立！"
             return 0
         fi
         
-        # 检查进程是否还活着
         if ! pgrep -f cloudflared > /dev/null; then
             error "检测到 Cloudflared 进程意外退出！"
             return 1
@@ -229,7 +234,6 @@ wait_for_argo_connection() {
         
         sleep 1
         ((elapsed++))
-        # 打印进度点，让用户知道没卡死
         echo -ne "."
     done
     
@@ -282,6 +286,8 @@ install_singbox_core() {
 setup_warp() {
     if [ -n "$WARP_PRIVATE_KEY" ]; then return 0; fi
     info "配置 WARP..."
+    
+    # 这里会调用修复后的 check 函数
     attempt_install_package "wireguard-tools"
     attempt_install_package "jq"
     
@@ -291,7 +297,6 @@ setup_warp() {
     
     WARP_PRIVATE_KEY="$PRIV"
     WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
-    # 关键修复：Sed 去掉 /32
     WARP_ADDRESS=$(echo "$RESP" | jq -r '.config.interface.addresses.v4' | sed 's/\/.*//g')
     WARP_RESERVED="[0,0,0]"
 
@@ -321,7 +326,6 @@ create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
-    # WARP 地址手动加 /32
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
@@ -439,7 +443,6 @@ install_all_nodes() {
     get_server_ip
     setup_warp
 
-    # 端口生成逻辑
     if lsof -i :443 >/dev/null 2>&1; then
         warn "443 端口被占用，Reality 将使用随机端口。"
         REALITY_DIRECT_PORT=$(shuf -i 10000-65535 -n 1)
@@ -450,7 +453,6 @@ install_all_nodes() {
     HY2_DIRECT_PORT=$(shuf -i 10000-65535 -n 1)
     ARGO_PORT=$(shuf -i 10000-65535 -n 1)
     
-    # 生成密码
     HY2_SMART_PASSWORD=$(generate_random_password)
     HY2_DIRECT_PASSWORD=$(generate_random_password)
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
@@ -460,14 +462,14 @@ install_all_nodes() {
     # 1. 创建配置
     create_config_json
     
-    # 2. 配置文件语法检查
+    # 2. 检查语法
     info "正在检查配置文件语法..."
     if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
         error "配置文件语法检查失败！"
         exit 1
     fi
 
-    # 3. 启动 Sing-box 服务 (核心)
+    # 3. 启动 Sing-box
     create_systemd_service
     systemctl restart sing-box
 
@@ -480,19 +482,16 @@ install_all_nodes() {
         success "Sing-box 服务已成功启动。"
     fi
     
-    # 4. 启动 Argo 隧道
+    # 4. 启动 Argo
     start_argo_tunnel
     
-    # 5. 验证 Argo 连通性 (必须连通才往下走)
+    # 5. 等待 Argo 连通
     if wait_for_argo_connection; then
-        # 6. 显示节点信息
         display_and_store_config_info
     else
-        # 失败处理
         error "Argo 隧道建立失败，跳过节点展示。"
     fi
     
-    # 提醒用户手动放行端口
     echo
     echo -e "${YELLOW}[重要提醒] 请手动在防火墙放行以下端口：${NC}"
     echo -e "   Reality TCP: ${REALITY_DIRECT_PORT}"
