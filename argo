@@ -176,11 +176,11 @@ start_argo_tunnel() {
     info "正在启动 Argo 临时隧道 (端口转发: $ARGO_PORT)..."
     # 启动命令，并将日志输出到文件以便抓取域名
     # 使用 nohup 后台运行
-    nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 > "$ARGO_LOG_FILE" 2>&1 &
+    nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > "$ARGO_LOG_FILE" 2>&1 &
     
     # 添加到 Crontab 实现开机自启
     # 注意：这里我们添加 sleep 10 确保网络就绪
-    local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 > $ARGO_LOG_FILE 2>&1 &"
+    local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate > $ARGO_LOG_FILE 2>&1 &"
     
     # 清理旧的 crontab 任务防止重复
     (crontab -l 2>/dev/null | grep -v "cloudflared") | crontab -
