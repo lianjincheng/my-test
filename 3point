@@ -465,7 +465,7 @@ create_config_json() {
   "dns": {
     "independent_cache": true, "strategy": "ipv4_only", "final": "cloudflare",
     "servers": [
-      { "tag": "cloudflare", "address": "https://1.1.1.1/dns-query", "detour": "direct" }
+      { "tag": "cloudflare", "address": "1.1.1.1", "detour": "direct" }
     ],
     "rules": [
       { "outbound": "any", "server": "cloudflare" }
