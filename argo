@@ -347,8 +347,8 @@ create_config_json() {
   },
   "inbounds": [
     {
-      "type": "hysteria2", 
-      "tag": "hy2-smart", 
+      "type": "hysteria2",
+      "tag": "hy2-smart",
       "listen": "0.0.0.0", 
       "listen_port": ${HY2_SMART_PORT},
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
@@ -356,9 +356,9 @@ create_config_json() {
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
-      "type": "vless", 
-      "tag": "reality-direct", 
-      "listen": "0.0.0.0", 
+      "type": "vless",
+      "tag": "reality-direct",
+      "listen": "0.0.0.0",
       "listen_port": ${REALITY_DIRECT_PORT},
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
@@ -367,18 +367,18 @@ create_config_json() {
       }
     },
     {
-      "type": "hysteria2", 
-      "tag": "hy2-direct", 
-      "listen": "0.0.0.0", 
+      "type": "hysteria2",
+      "tag": "hy2-direct",
+      "listen": "0.0.0.0",
       "listen_port": ${HY2_DIRECT_PORT},
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
     },
     {
-      "type": "vless", 
-      "tag": "vless-argo", 
-      "listen": "127.0.0.1", 
+      "type": "vless",
+      "tag": "vless-argo",
+      "listen": "127.0.0.1",
       "listen_port": ${ARGO_PORT},
       "users": [ { "uuid": "${ARGO_UUID}" } ],
       "transport": { "type": "ws", "path": "${ARGO_PATH}" }
@@ -386,20 +386,20 @@ create_config_json() {
   ],
   "outbounds": [
     {
-      "type": "wireguard", 
+      "type": "wireguard",
       "tag": "warp-out",
       "local_address": [ "${WARP_ADDRESS}/32" ],
-      "private_key": "${WARP_PRIVATE_KEY}", 
+      "private_key": "${WARP_PRIVATE_KEY}",
       "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
-      "server": "162.159.192.1", 
-      "server_port": 2408, 
+      "server": "162.159.192.1",
+      "server_port": 2408,
       "reserved": ${WARP_RESERVED},
       "domain_strategy": "ipv4_only"
     },
     { 
-      "type": "direct", 
+      "type": "direct",
       "tag": "direct",
-      "domain_strategy": "ipv4_only" 
+      "domain_strategy": "ipv4_only"
     },
     { "type": "dns", "tag": "dns-out" }
   ],
