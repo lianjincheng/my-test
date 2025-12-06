@@ -396,7 +396,7 @@ create_config_json() {
       "reserved": ${WARP_RESERVED},
       "domain_strategy": "ipv4_only"
     },
-    { 
+    {
       "type": "direct",
       "tag": "direct",
       "domain_strategy": "ipv4_only"
