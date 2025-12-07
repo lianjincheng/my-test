@@ -341,9 +341,9 @@ create_config_json() {
   "log": { "level": "error", "timestamp": true },
   "dns": {
     "servers": [
-      { "tag": "google", "address": "8.8.8.8", "detour": "direct" }
+      { "tag": "cloudflare", "address": "1.1.1.1", "detour": "direct" }
     ],
-    "strategy": "ipv4_only","independent_cache": true,"final": "google"
+    "strategy": "ipv4_only","independent_cache": true,"final": "cloudflare"
   },
   "inbounds": [
     {
