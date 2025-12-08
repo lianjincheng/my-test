@@ -156,6 +156,13 @@ net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
 
+# --- UDP 连接追踪优化 (针对 Hysteria2/QUIC) ---
+# 只有收到单向包时的超时时间 (默认30秒，改为60秒)
+net.netfilter.nf_conntrack_udp_timeout = 60
+# 双方都有数据传输后的超时时间 (默认120秒，改为300秒)
+# 也就是让 VPS 记住这条 UDP 连接 5 分钟，防止看视频暂停时断连
+net.netfilter.nf_conntrack_udp_timeout_stream = 300
+
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
