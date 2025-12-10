@@ -350,7 +350,7 @@ create_config_json() {
       "type": "hysteria2",
       "tag": "hy2-smart",
       "listen": "0.0.0.0", 
-      "listen_port": ${HY2_SMART_PORT},
+      "listen_port": ${HY2_SMART_PORT},"sniff": true
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
@@ -359,7 +359,7 @@ create_config_json() {
       "type": "vless",
       "tag": "reality-direct",
       "listen": "0.0.0.0",
-      "listen_port": ${REALITY_DIRECT_PORT},
+      "listen_port": ${REALITY_DIRECT_PORT},"sniff": true
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
@@ -370,7 +370,7 @@ create_config_json() {
       "type": "hysteria2",
       "tag": "hy2-direct",
       "listen": "0.0.0.0",
-      "listen_port": ${HY2_DIRECT_PORT},
+      "listen_port": ${HY2_DIRECT_PORT},"sniff": true
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
@@ -378,7 +378,7 @@ create_config_json() {
     {
       "type": "vless",
       "tag": "vless-argo",
-      "listen": "127.0.0.1",
+      "listen": "127.0.0.1","sniff": true
       "listen_port": ${ARGO_PORT},
       "users": [ { "uuid": "${ARGO_UUID}" } ],
       "transport": { "type": "ws", "path": "${ARGO_PATH}" }
