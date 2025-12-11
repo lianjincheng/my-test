@@ -439,7 +439,7 @@ display_and_store_config_info() {
     echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Smart"
     echo
     echo -e "${GREEN} 2. [直连] Reality (TCP-Vision)${NC}"
-    echo -e "    vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=chrome&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Reality-Direct"
+    echo -e "    vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=firefox&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Reality-Direct"
     echo
     echo -e "${GREEN} 3. [直连] Hysteria2 (备用)${NC}"
     echo -e "    hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Direct"
@@ -462,7 +462,7 @@ display_and_store_config_info() {
         for i in {1..13}; do
             local current_cf_ip="yg${i}.${base_domain}"
             local node_name="Argo-YG${i}"
-            local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}#${node_name}"
+            local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=firefox#${node_name}"
             
             echo -e "${GREEN} [Argo] 优选节点 ${i} (${current_cf_ip})${NC}"
             echo -e "    ${argo_link}"
