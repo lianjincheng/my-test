@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script for Sing-Box Hysteria2 & Reality & Argo Temporary Tunnel
-# Adapted for Sing-box v1.11+ (Final Syntax Fix for Sniffing & WireGuard)
+# Adapted for Sing-box v1.11+ (Final Syntax Fix for DNS & WireGuard)
 
 # --- Author Information ---
 AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Pure IPv4 Ultimate / Modern)"
@@ -416,7 +416,7 @@ create_config_json() {
   "route": {
     "rules": [
       { "action": "sniff" },
-      { "protocol": "dns", "action": "hijack_dns" },
+      { "action": "resolve", "strategy": "ipv4_only" },
       { "inbound": "hy2-direct", "outbound": "direct" },
       { "inbound": "reality-direct", "outbound": "direct" },
       { "inbound": "vless-argo", "outbound": "direct" },
