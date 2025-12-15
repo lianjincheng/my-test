@@ -340,10 +340,10 @@ create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
 
-    # --- 终极 IPv4 纯净版配置 (Modern v1.11+ Fixed) ---
-    # 1. 移除特殊 DNS outbound (Fix FATAL: legacy special outbounds)
-    # 2. 路由中使用 action: hijack_dns (Fix DNS route)
-    # 3. DNS address 加上 udp:// 前缀 (Fix WARN: legacy DNS)
+    # --- 终极 IPv4 纯净版配置 (Modern v1.11+ Final Fix) ---
+    # 1. 移除特殊 DNS outbound
+    # 2. 路由中使用 action: hijack_dns
+    # 3. DNS address 加上 udp:// 前缀
     
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
@@ -373,10 +373,7 @@ create_config_json() {
       "tag": "hy2-smart",
       "listen": "::", 
       "listen_port": ${HY2_SMART_PORT},
-      "sniffing": {
-        "enabled": true,
-        "dest_override": ["http", "tls", "quic"]
-      },
+      "sniffing": { "enabled": true, "dest_override": ["http", "tls", "quic"] },
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
@@ -386,10 +383,7 @@ create_config_json() {
       "tag": "reality-direct",
       "listen": "::",
       "listen_port": ${REALITY_DIRECT_PORT},
-      "sniffing": {
-        "enabled": true,
-        "dest_override": ["http", "tls", "quic"]
-      },
+      "sniffing": { "enabled": true, "dest_override": ["http", "tls", "quic"] },
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
@@ -401,10 +395,7 @@ create_config_json() {
       "tag": "hy2-direct",
       "listen": "::",
       "listen_port": ${HY2_DIRECT_PORT},
-      "sniffing": {
-        "enabled": true,
-        "dest_override": ["http", "tls", "quic"]
-      },
+      "sniffing": { "enabled": true, "dest_override": ["http", "tls", "quic"] },
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
@@ -413,10 +404,7 @@ create_config_json() {
       "type": "vless",
       "tag": "vless-argo",
       "listen": "127.0.0.1",
-      "sniffing": {
-        "enabled": true,
-        "dest_override": ["http", "tls", "quic"]
-      },
+      "sniffing": { "enabled": true, "dest_override": ["http", "tls", "quic"] },
       "listen_port": ${ARGO_PORT},
       "users": [ { "uuid": "${ARGO_UUID}" } ],
       "transport": { "type": "ws", "path": "${ARGO_PATH}" }
@@ -427,8 +415,7 @@ create_config_json() {
       "type": "direct",
       "tag": "direct",
       "domain_strategy": "ipv4_only"
-    },
-    { "type": "dns", "tag": "dns-out" }
+    }
   ],
   "route": {
     "rules": [
