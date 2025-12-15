@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script for Sing-Box Hysteria2 & Reality & Argo Temporary Tunnel
-# Adapted for Sing-box v1.11+ (Modern Syntax & DNS Hijack Fix)
+# Adapted for Sing-box v1.11+ (Final Syntax Fix)
 
 # --- Author Information ---
 AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Pure IPv4 Ultimate / Modern)"
@@ -344,6 +344,7 @@ create_config_json() {
     # 1. 移除特殊 DNS outbound
     # 2. 路由中使用 action: hijack_dns
     # 3. DNS address 加上 udp:// 前缀
+    # 4. WireGuard 使用 peers 数组结构
     
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
@@ -360,10 +361,15 @@ create_config_json() {
       "tag": "warp-out",
       "address": [ "${WARP_ADDRESS}/32" ],
       "private_key": "${WARP_PRIVATE_KEY}",
-      "peer_public_key": "${WARP_PEER_PUBLIC_KEY}",
-      "server": "162.159.192.1",
-      "server_port": 2408,
-      "reserved": ${WARP_RESERVED},
+      "peers": [
+        {
+          "server": "162.159.192.1",
+          "server_port": 2408,
+          "public_key": "${WARP_PEER_PUBLIC_KEY}",
+          "allowed_ips": ["0.0.0.0/0", "::/0"],
+          "reserved": ${WARP_RESERVED}
+        }
+      ],
       "domain_strategy": "ipv4_only"
     }
   ],
