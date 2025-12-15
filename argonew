@@ -345,7 +345,10 @@ create_config_json() {
   "log": { "level": "error", "timestamp": true },
   "dns": {
     "servers": [
-      { "address": "udp://1.1.1.1" }
+      {
+        "type": "udp",
+        "server": "1.1.1.1"
+      }
     ]
   },
   "endpoints": [
