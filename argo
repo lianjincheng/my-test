@@ -207,7 +207,7 @@ start_argo_tunnel() {
 
     # 1. 禁用 IPv6 (--edge-ip-version 4)
     # 2. 启用 HTTP2 (--protocol http2)
-    nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 --retries 100 > "$ARGO_LOG_FILE" 2>&1 &
+    nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 --retries 10 > "$ARGO_LOG_FILE" 2>&1 &
     
     sleep 2
     if ! pgrep -f cloudflared > /dev/null; then
@@ -216,7 +216,7 @@ start_argo_tunnel() {
         return 1
     fi
 
-    local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 --retries 100 > $ARGO_LOG_FILE 2>&1 &"
+    local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 --retries 10 > $ARGO_LOG_FILE 2>&1 &"
     (crontab -l 2>/dev/null | grep -v "cloudflared") | crontab -
     (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
 }
