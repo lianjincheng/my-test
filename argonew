@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script for Sing-Box Hysteria2 & Reality & Argo Temporary Tunnel
-# Adapted for Sing-box v1.11+ (Final Syntax Fix for DNS & WireGuard)
+# Adapted for Sing-box v1.11+ (Final Clean Version)
 
 # --- Author Information ---
 AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Pure IPv4 Ultimate / Modern)"
@@ -75,7 +75,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
-    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (v1.11+ 最終修复版) ${NC}"
+    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (v1.11+ 最终完美版) ${NC}"
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
 }
 
@@ -345,9 +345,8 @@ create_config_json() {
   "log": { "level": "error", "timestamp": true },
   "dns": {
     "servers": [
-      { "tag": "cloudflare", "address": "udp://1.1.1.1", "detour": "direct" }
-    ],
-    "strategy": "ipv4_only","independent_cache": true,"final": "cloudflare"
+      { "address": "udp://1.1.1.1" }
+    ]
   },
   "endpoints": [
     {
@@ -363,8 +362,7 @@ create_config_json() {
           "allowed_ips": ["0.0.0.0/0", "::/0"],
           "reserved": ${WARP_RESERVED}
         }
-      ],
-      "domain_strategy": "ipv4_only"
+      ]
     }
   ],
   "inbounds": [
@@ -409,8 +407,7 @@ create_config_json() {
   "outbounds": [
     {
       "type": "direct",
-      "tag": "direct",
-      "domain_strategy": "ipv4_only"
+      "tag": "direct"
     }
   ],
   "route": {
