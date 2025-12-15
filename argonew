@@ -360,8 +360,9 @@ create_config_json() {
       "private_key": "${WARP_PRIVATE_KEY}",
       "peers": [
         {
-          "server": "162.159.192.1",
-          "server_port": 2408,
+          "address": "162.159.192.1",
+          "port": 2408,
+          "public_key": "${WARP_PEER_PUBLIC_KEY}",
           "allowed_ips": ["0.0.0.0/0", "::/0"],
           "reserved": ${WARP_RESERVED}
         }
@@ -432,7 +433,6 @@ create_config_json() {
 }
 EOF
 }
-
 
 create_systemd_service() {
     cat > "$SINGBOX_SERVICE_FILE" <<EOF
