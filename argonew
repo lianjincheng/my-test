@@ -75,7 +75,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
-    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (v1.11+ 最终修复版) ${NC}"
+    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (v1.11+ 最終修复版) ${NC}"
     echo -e "${MAGENTA}${BOLD}================================================${NC}"
 }
 
