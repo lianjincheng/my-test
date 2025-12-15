@@ -354,7 +354,7 @@ create_config_json() {
   "endpoints": [
     {
       "type": "wireguard",
-      "tag": "warp-out",
+      "tag": "warp-out","mtu": 1280,
       "address": [ "${WARP_ADDRESS}/32" ],
       "private_key": "${WARP_PRIVATE_KEY}",
       "peers": [
@@ -404,7 +404,7 @@ create_config_json() {
       "listen": "127.0.0.1",
       "listen_port": ${ARGO_PORT},
       "users": [ { "uuid": "${ARGO_UUID}" } ],
-      "transport": { "type": "ws", "path": "${ARGO_PATH}" }
+      "transport": { "type": "ws", "path": "${ARGO_PATH}","max_early_data": 2048,"early_data_header_name": "Sec-WebSocket-Protocol" }
     }
   ],
   "outbounds": [
