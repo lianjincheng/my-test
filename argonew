@@ -372,7 +372,7 @@ create_config_json() {
     {
       "type": "hysteria2",
       "tag": "hy2-smart",
-      "listen": "::", 
+      "listen": "::","ignore_client_bandwidth": true,
       "listen_port": ${HY2_SMART_PORT},
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
@@ -392,7 +392,7 @@ create_config_json() {
     {
       "type": "hysteria2",
       "tag": "hy2-direct",
-      "listen": "::",
+      "listen": "::","ignore_client_bandwidth": true,
       "listen_port": ${HY2_DIRECT_PORT},
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
