@@ -362,7 +362,7 @@ create_config_json() {
           "address": "162.159.192.1",
           "port": 2408,
           "public_key": "${WARP_PEER_PUBLIC_KEY}",
-          "allowed_ips": ["0.0.0.0/0", "::/0"],
+          "allowed_ips": ["0.0.0.0/0"],
           "reserved": ${WARP_RESERVED}
         }
       ]
