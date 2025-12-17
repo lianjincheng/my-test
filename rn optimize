@@ -178,11 +178,6 @@ net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 
-# 3. 缩短 UDP 超时时间 (针对 Hysteria2 最重要的一项！)
-# 默认通常是 30s 或 120s，改为 30s 既能保证连接稳定，又能快速回收旧端口
-net.netfilter.nf_conntrack_udp_timeout = 30
-net.netfilter.nf_conntrack_udp_timeout_stream = 60
-
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
