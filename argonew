@@ -387,7 +387,7 @@ create_config_json() {
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
-        "reality": { "enabled": true, "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 }, "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}", "short_id": "${REALITY_DIRECT_SHORT_ID}" }
+        "reality": { "enabled": true, "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 }, "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}", "short_id": "${REALITY_DIRECT_SHORT_ID}","max_time_difference": "1m" }
       }
     },
     {
