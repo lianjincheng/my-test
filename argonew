@@ -344,6 +344,7 @@ create_config_json() {
 {
   "log": { "level": "error", "timestamp": true },
   "dns": {
+    "strategy": "ipv4_only",
     "servers": [
       {
         "type": "udp",
