@@ -354,7 +354,7 @@ create_config_json() {
   "endpoints": [
     {
       "type": "wireguard",
-      "tag": "warp-out","mtu": 1280,"persistent_keepalive_interval": 25,
+      "tag": "warp-out","mtu": 1280,
       "address": [ "${WARP_ADDRESS}/32" ],
       "private_key": "${WARP_PRIVATE_KEY}",
       "peers": [
@@ -362,7 +362,7 @@ create_config_json() {
           "address": "162.159.192.1",
           "port": 2408,
           "public_key": "${WARP_PEER_PUBLIC_KEY}",
-          "allowed_ips": ["0.0.0.0/0"],
+          "allowed_ips": ["0.0.0.0/0"],"persistent_keepalive_interval": 25,
           "reserved": ${WARP_RESERVED}
         }
       ]
