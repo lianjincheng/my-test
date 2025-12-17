@@ -108,25 +108,26 @@ apply_sysctl_optimizations() {
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# --- 全局缓冲区 (核心基础，Hysteria/UDP 主要看这里) ---
-# 默认值改为 256KB (足够大了)，最大值保持 64MB 以备不时之需
+# --- 全局缓冲区 (Hysteria/UDP 暴力发包的核心支撑) ---
+# 最大值拉到 64MB，应对 4K/8K 视频上传的突发流量
 net.core.rmem_max = 67108864
 net.core.wmem_max = 67108864
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
 
 # --- TCP 缓冲区 (Reality 专用优化) ---
-# 让 TCP 从小窗口开始，通过 BBR 自己去探测天花板，而不是硬塞
+# 允许 BBR 自动调整窗口，最大支持 64MB
 net.ipv4.tcp_rmem = 8192 262144 67108864
 net.ipv4.tcp_wmem = 8192 262144 67108864
 
-# --- TCP 行为微调 ---
+# --- TCP 行为微调 (极客参数) ---
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_notsent_lowat = 16384
 net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_mtu_probing = 1
+# 注意：开启 TFO (3) 在国内某些地区可能导致握手失败，若 Reality 连不上请改为 0
 net.ipv4.tcp_fastopen = 3
 
 # --- 队列与并发 ---
@@ -135,28 +136,30 @@ net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
 
 # --- UDP 内存水位 (Hysteria 专用保障) ---
-# 单位是页(4KB)
-# 64MB / 128MB / 256MB
+# 确保 UDP 有足够的内存页分配
 net.ipv4.udp_mem = 16384 32768 65536
 
-# --- 其他 ---
+# --- 系统资源限制解除 ---
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
 fs.file-max = 1048576
 fs.nr_open = 1048576
 net.ipv4.ip_local_port_range = 10240 65535
-# 开启 SACK 和 时间戳 (BBR 刚需)
+
+# --- BBR 刚需 ---
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_timestamps = 1
-# 遇到崩溃自动重启 (VPS 救命参数)
+
+# --- 稳定性保障 ---
+# 遇到崩溃自动重启
 kernel.panic = 10
 
-# 保持你原有的 IPv6 设置
+# 禁用 IPv6 (配合你的 ipv4_only 策略)
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 
-# TCP Keepalive 优化 (防止Argo隧道空闲假死)
+# --- Argo 隧道保活优化 ---
 net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
@@ -169,7 +172,9 @@ net.netfilter.nf_conntrack_udp_timeout = 60
 net.netfilter.nf_conntrack_udp_timeout_stream = 300
 
 # --- 连接追踪表优化 (加快垃圾回收) ---
+# 上限设为 26万，防止 RackNerd 小内存爆掉
 net.netfilter.nf_conntrack_max = 262144
+
 # 1. 缩短 TCP 已建立连接的保留时间 (默认5天太久了，改1小时足够)
 net.netfilter.nf_conntrack_tcp_timeout_established = 3600
 
