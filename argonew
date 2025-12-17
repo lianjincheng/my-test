@@ -344,7 +344,6 @@ create_config_json() {
 {
   "log": { "level": "error", "timestamp": true },
   "dns": {
-    "strategy": "ipv4_only",
     "servers": [
       {
         "type": "udp",
@@ -417,6 +416,7 @@ create_config_json() {
   "route": {
     "rules": [
       { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
       { "action": "resolve", "strategy": "ipv4_only" },
       { "inbound": "hy2-direct", "outbound": "direct" },
       { "inbound": "reality-direct", "outbound": "direct" },
