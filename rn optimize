@@ -133,7 +133,7 @@ net.ipv4.tcp_no_metrics_save = 1
 # 关闭 ECN，防止国内路由丢包
 net.ipv4.tcp_ecn = 0
 
-# 降低延迟，不能用改为0
+# 优化线路为了降低延迟可以设置为3，不能用改为0
 net.ipv4.tcp_fastopen = 0
 # 限制发送队列堆积，确保直播推流时不仅带宽足，而且延迟低
 # net.ipv4.tcp_notsent_lowat = 16384
