@@ -104,35 +104,36 @@ apply_sysctl_optimizations() {
     
     cat <<EOF > "$sysctl_conf"
 # === Ultimate Optimization ===
-# --- 核心拥塞控制 ---
+# --- 1. 核心加速 (BBR) ---
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# --- 全局缓冲区 (Hysteria/UDP 暴力发包的核心支撑) ---
-# 最大值拉到 16MB，应对 4K/8K 视频上传的突发流量
+# --- 2. 队列优化 (CPU 忙时的缓冲地带) ---
+# 允许数据包排队，防止 CPU 处理不过来时直接丢包
+net.core.netdev_max_backlog = 32768
+net.core.somaxconn = 32768
+net.ipv4.tcp_max_syn_backlog = 8192
+
+# --- 3. 缓冲区优化 (理性版 16MB) ---
+# 16MB 足够跑满千兆口，且不会导致小内存 VPS 崩溃
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.core.rmem_default = 1048576
 net.core.wmem_default = 1048576
-
-# --- TCP 缓冲区 (Reality 专用优化) ---
-# 允许 BBR 自动调整窗口，最大支持 16MB
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 
-# --- TCP 行为微调 (极客参数) ---
+# --- 4. TCP 智能逻辑 (纯正面收益) ---
 net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_no_metrics_save = 1
-net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_mtu_probing = 1
+# 拒绝慢启动，暂停后秒恢复
+net.ipv4.tcp_slow_start_after_idle = 0
+# 不缓存历史状态，每次都全力冲刺
+net.ipv4.tcp_no_metrics_save = 1
+# 关闭 ECN，防止国内路由丢包
+net.ipv4.tcp_ecn = 0
 # 注意：开启 TFO (3) 在国内某些地区可能导致握手失败，若 Reality 连不上请改为 0
 net.ipv4.tcp_fastopen = 0
-
-# --- 队列与并发 ---
-net.core.netdev_max_backlog = 32768
-net.core.somaxconn = 32768
-net.ipv4.tcp_max_syn_backlog = 8192
 
 # --- UDP 内存水位 (Hysteria 专用保障) ---
 # 确保 UDP 有足够的内存页分配
