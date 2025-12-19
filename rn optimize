@@ -115,12 +115,13 @@ net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
 
 # --- 3. 缓冲区优化  ---
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.rmem_default = 1048576
-net.core.wmem_default = 1048576
-net.ipv4.tcp_rmem = 4096 87380 16777216
-net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.core.rmem_default = 2097152
+net.core.wmem_default = 2097152
+net.ipv4.tcp_rmem = 8192 2097152 33554432
+net.ipv4.tcp_wmem = 8192 2097152 33554432
+net.ipv4.udp_mem = 24576 49152 98304
 
 # --- 4. TCP 智能逻辑 (纯正面收益) ---
 net.ipv4.tcp_window_scaling = 1
@@ -137,9 +138,6 @@ net.ipv4.tcp_fastopen = 0
 # 限制发送队列堆积，确保直播推流时不仅带宽足，而且延迟低
 # net.ipv4.tcp_notsent_lowat = 16384
 
-# --- UDP 内存水位 (Hysteria 专用保障) ---
-# 确保 UDP 有足够的内存页分配
-net.ipv4.udp_mem = 16384 32768 65536
 # --- 系统资源限制解除 ---
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
