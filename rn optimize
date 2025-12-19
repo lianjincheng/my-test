@@ -183,6 +183,12 @@ net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 
+########## netdev 小包 & 高频流量优化 (针对 Hy2 暴力发包) ##########
+# 增加 CPU 一次中断处理的数据包数量 (默认是 300)
+net.core.netdev_budget = 600
+# 增加 CPU 处理中断的时间预算 (微秒)
+net.core.netdev_budget_usecs = 8000
+
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
