@@ -132,8 +132,12 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 # 关闭 ECN，防止国内路由丢包
 net.ipv4.tcp_ecn = 0
-# 注意：开启 TFO (3) 在国内某些地区可能导致握手失败，若 Reality 连不上请改为 0
+
+# 注意：普通线路设置为 0 ，GIA优质线路设置为3，降低延迟
 net.ipv4.tcp_fastopen = 0
+# 降低延迟 (GIA 专属优化)，普通线路注释掉，充分利用偶尔出现的“空闲带宽窗口”
+# 限制发送队列堆积，确保直播推流时不仅带宽足，而且延迟低
+# net.ipv4.tcp_notsent_lowat = 16384
 
 # --- UDP 内存水位 (Hysteria 专用保障) ---
 # 确保 UDP 有足够的内存页分配
