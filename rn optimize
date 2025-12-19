@@ -139,7 +139,7 @@ net.ipv4.tcp_fastopen = 0
 
 # --- UDP 内存水位 (Hysteria 专用保障) ---
 # 确保 UDP 有足够的内存页分配
-net.ipv4.udp_mem = 65536 131072 262144
+net.ipv4.udp_mem = 16384 32768 65536
 # --- 系统资源限制解除 ---
 vm.swappiness = 10
 vm.vfs_cache_pressure = 50
