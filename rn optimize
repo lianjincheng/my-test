@@ -188,6 +188,10 @@ net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 net.core.netdev_budget = 600
 # 增加 CPU 处理中断的时间预算 (微秒)
 net.core.netdev_budget_usecs = 8000
+# 开启 F-RTO 算法后，内核在处理超时重传时会更聪明，避免不必要的重传
+net.ipv4.tcp_frto = 2
+# 端口复用，减少系统资源的无效占用，让连接建立更顺畅
+net.ipv4.tcp_tw_reuse = 1
 
 EOF
 
