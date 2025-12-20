@@ -459,14 +459,14 @@ display_and_store_config_info() {
     
     echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
     info "正在从日志文件抓取域名..."
-    
+    echo
     local ARGO_DOMAIN=""
     if [ -f "$ARGO_LOG_FILE" ]; then
         ARGO_DOMAIN=$(grep -a "trycloudflare.com" "$ARGO_LOG_FILE" | tail -n 10 | grep -o 'https://.*trycloudflare.com' | sed 's/https:\/\///' | head -n 1)
     fi
     
     if [ -n "$ARGO_DOMAIN" ]; then
-        success ${GREEN}"抓取成功！当前隧道域名: ${ARGO_DOMAIN}${NC}"
+        success ${YELLOW}"抓取成功！当前隧道域名: ${ARGO_DOMAIN}${NC}"
         echo
         echo -e "${YELLOW}说明: 以下生成 优选域名节点 (已跳过 yg4, yg11)${NC}"
         echo
