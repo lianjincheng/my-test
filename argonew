@@ -466,10 +466,10 @@ display_and_store_config_info() {
     fi
     
     if [ -n "$ARGO_DOMAIN" ]; then
-        success "抓取成功！${YELLOW}当前隧道域名: ${ARGO_DOMAIN}${NC}"
+        success ${GREEN}"抓取成功！当前隧道域名: ${ARGO_DOMAIN}${NC}"
+        echo
         echo -e "${YELLOW}说明: 以下生成 优选域名节点 (已跳过 yg4, yg11)${NC}"
         echo
-        
         local base_domain="ygkkk.dpdns.org"
         for i in {1..13}; do
             # 跳过已失效的 yg4 和 yg11
