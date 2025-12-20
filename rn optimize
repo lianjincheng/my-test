@@ -123,10 +123,6 @@ net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 net.ipv4.udp_mem = 24576 49152 98304
 
-# 强制 CPU 在一次中断中处理更多数据包，防止 Hy2 高频发包被丢弃
-net.core.netdev_budget = 600
-net.core.netdev_budget_usecs = 8000
-
 # --- 4. TCP 智能逻辑 (纯正面收益) ---
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_mtu_probing = 1
