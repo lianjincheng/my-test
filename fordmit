@@ -275,7 +275,7 @@ create_config_json() {
       "private_key": "${WARP_PRIVATE_KEY}",
       "peers": [
         {
-          "address": "162.159.192.1",
+          "address": "engage.cloudflareclient.com",
           "port": 2408,
           "public_key": "${WARP_PEER_PUBLIC_KEY}",
           "allowed_ips": ["0.0.0.0/0"],
