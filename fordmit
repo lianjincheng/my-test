@@ -203,11 +203,6 @@ generate_single_reality_credentials() {
 create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
-
-    # --- 极简直连配置 ---
-    # 1. 无 DNS/Route 复杂策略 (直连无需分流)
-    # 2. 仅保留 Reality 和 Hy2 入站
-    
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
