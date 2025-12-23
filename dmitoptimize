@@ -110,6 +110,10 @@ net.core.wmem_default = 2097152
 net.ipv4.tcp_rmem = 8192 2097152 16777216
 net.ipv4.tcp_wmem = 8192 2097152 16777216
 
+# 乱序容忍 (节约流量)
+net.ipv4.tcp_reordering = 7
+net.ipv4.tcp_frto = 2
+
 # 性能优化
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_mtu_probing = 1
