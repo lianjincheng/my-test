@@ -211,6 +211,14 @@ create_config_json() {
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
+    "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "server": "1.1.1.1"
+      }
+    ]
+  },
   "inbounds": [
     {
       "type": "vless",
@@ -220,12 +228,12 @@ create_config_json() {
       "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
       "tls": {
         "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
-        "reality": { 
-            "enabled": true, 
-            "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 }, 
-            "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}", 
+        "reality": {
+            "enabled": true,
+            "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 },
+            "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}",
             "short_id": "${REALITY_DIRECT_SHORT_ID}",
-            "max_time_difference": "1m" 
+            "max_time_difference": "1m"
         }
       }
     },
@@ -234,7 +242,6 @@ create_config_json() {
       "tag": "hy2-direct",
       "listen": "::",
       "listen_port": ${HY2_DIRECT_PORT},
-      "ignore_client_bandwidth": true,
       "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
       "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
@@ -242,7 +249,30 @@ create_config_json() {
   ],
   "outbounds": [
     { "type": "direct", "tag": "direct" }
-  ]
+  ],
+ "route": {
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "action": "resolve",
+        "strategy": "ipv4_only"
+      },
+      {
+        "inbound": "hy2-direct",
+        "outbound": "direct"
+      },
+      {
+        "inbound": "reality-direct",
+        "outbound": "direct"
+      },
+    ]
+    }
 }
 EOF
 }
