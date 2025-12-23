@@ -272,7 +272,7 @@ create_config_json() {
         "outbound": "direct"
       },
     ]
-    }
+ }
 }
 EOF
 }
