@@ -97,7 +97,7 @@ apply_sysctl_optimizations() {
     local sysctl_conf="/etc/sysctl.d/99-proxy-optimizations.conf"
     
     cat <<EOF > "$sysctl_conf"
-# === Ultimate Optimization ===
+# === Ultimate Optimization（需要安装bbrv3，科技lion脚本选32安装 XANMOD(main)） ===
 # --- 1. 核心加速 ---
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -110,19 +110,6 @@ net.core.wmem_default = 2097152
 net.ipv4.tcp_rmem = 8192 2097152 16777216
 net.ipv4.tcp_wmem = 8192 2097152 16777216
 
-# --- 2. [关键优化] BBR 油门限制器 ---
-# 降低 BBR 在慢启动和拥塞避免阶段的探测增益，减少冗余发包
-net.ipv4.tcp_pacing_ss_ratio = 150
-net.ipv4.tcp_pacing_ca_ratio = 110
-
-# --- 3. [关键] 低延迟流控 ---
-# 既然线路好，开启此项可防止上传跑满时 Ping 值爆炸 (直播/游戏刚需)
-net.ipv4.tcp_notsent_lowat = 16384
-
-# --- 4. TCP 智能逻辑 ---
-# 乱序容忍 (节约流量)
-net.ipv4.tcp_reordering = 7
-net.ipv4.tcp_frto = 2
 # 性能优化
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_mtu_probing = 1
