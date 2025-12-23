@@ -102,13 +102,13 @@ apply_sysctl_optimizations() {
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# --- 2. 缓冲区 (64MB改成67108864，32M改成33554432) ---
-net.core.rmem_max = 33554432
-net.core.wmem_max = 33554432
+# --- 2. 缓冲区 (64MB改成67108864，32M改成33554432，16M改成16777216) ---
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
 net.core.rmem_default = 2097152
 net.core.wmem_default = 2097152
-net.ipv4.tcp_rmem = 8192 2097152 33554432
-net.ipv4.tcp_wmem = 8192 2097152 33554432
+net.ipv4.tcp_rmem = 8192 2097152 16777216
+net.ipv4.tcp_wmem = 8192 2097152 16777216
 
 # --- 3. [关键] 低延迟流控 ---
 # 既然线路好，开启此项可防止上传跑满时 Ping 值爆炸 (直播/游戏刚需)
