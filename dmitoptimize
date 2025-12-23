@@ -1,0 +1,235 @@
+#!/bin/bash
+#
+# Ultimate VPS Performance Optimization Script (For DMIT)
+#
+
+# --- [Header] ---
+set -e
+export LANG=en_US.UTF-8
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+check_root() { 
+    if [ "$(id -u)" -ne 0 ]; then 
+        error "Must be run as root. Please use 'sudo bash $0'."
+    fi 
+}
+
+check_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        if [[ "$ID" != "debian" && "$ID" != "ubuntu" && "$ID_LIKE" != *"debian"* ]]; then
+            error "此脚本仅支持 Debian/Ubuntu 系统。检测到: $ID"
+        fi
+    else
+        error "无法检测操作系统版本，脚本终止。"
+    fi
+}
+
+# --- [Update & Install] ---
+update_and_install() {
+    info "正在更新系统并安装依赖 (含时间同步)..."
+    
+    # 抑制交互式弹窗
+    export DEBIAN_FRONTEND=noninteractive
+    
+    if ! apt-get update; then
+        warn "apt-get update 出现警告，尝试继续..."
+    fi
+
+    # 增加了 chrony (时间同步) 和 ca-certificates
+    local pkgs=(curl socat jq sudo coreutils grep sed gawk chrony ca-certificates)
+    
+    if ! apt-get install -y "${pkgs[@]}"; then
+        error "依赖安装失败。"
+    fi
+    
+    # 强制立即同步时间 (这对 Sing-Box Reality 至关重要)
+    info "正在校准服务器时间..."
+    if systemctl is-active --quiet chrony; then
+        systemctl restart chrony
+    else
+        systemctl enable --now chrony
+    fi
+    chronyc makestep >/dev/null 2>&1 || true
+    success "依赖安装完成，时间已同步。"
+}
+
+# --- [Kernel Modules] ---
+load_kernel_modules() {
+    info "正在配置内核模块..."
+    local modules=("tcp_bbr" "sch_fq" "nf_conntrack")
+    local modules_conf="/etc/modules-load.d/proxy-optimizations.conf"
+
+    # 虚拟化检测
+    local virt_type
+    virt_type=$(systemd-detect-virt 2>/dev/null || echo "unknown")
+    
+    if [[ "$virt_type" == "openvz" || "$virt_type" == "lxc" ]]; then
+        warn "检测到容器环境 ($virt_type)。跳过模块加载，仅应用部分参数。"
+        return 0
+    fi
+
+    cat <<EOF > "$modules_conf"
+tcp_bbr
+sch_fq
+nf_conntrack
+EOF
+
+    for module in "${modules[@]}"; do
+        if ! modprobe "$module" 2>/dev/null; then
+            warn "模块 $module 加载失败 (可能是内核不支持)，继续..."
+        fi
+    done
+}
+
+# --- [Sysctl Optimizations] ---
+apply_sysctl_optimizations() {
+    info "正在应用 Sysctl 内核参数 (BBR + FQ)..."
+    local sysctl_conf="/etc/sysctl.d/99-proxy-optimizations.conf"
+    
+    cat <<EOF > "$sysctl_conf"
+# === Ultimate Optimization ===
+# --- 1. 核心加速 ---
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# --- 2. 缓冲区 (64MB 极限版 - 适配 2Gbps) ---
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.rmem_default = 2097152
+net.core.wmem_default = 2097152
+net.ipv4.tcp_rmem = 8192 2097152 67108864
+net.ipv4.tcp_wmem = 8192 2097152 67108864
+
+# --- 3. [关键] 低延迟流控 ---
+# 既然线路好，开启此项可防止上传跑满时 Ping 值爆炸 (直播/游戏刚需)
+net.ipv4.tcp_notsent_lowat = 16384
+
+# --- 4. TCP 智能逻辑 ---
+# 乱序容忍 (节约流量)
+net.ipv4.tcp_reordering = 7
+net.ipv4.tcp_frto = 2
+# 性能优化
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_ecn = 0
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_timestamps = 1
+
+# --- 5. 基础与稳定性 ---
+net.core.netdev_max_backlog = 32768
+net.core.somaxconn = 32768
+net.ipv4.tcp_max_syn_backlog = 8192
+# 端口范围保障
+net.ipv4.ip_local_port_range = 10240 65535
+# 内存保护
+vm.swappiness = 10
+# 文件句柄
+fs.file-max = 1048576
+fs.nr_open = 1048576
+
+# --- 6. 连接追踪优化 ---
+# 上限 (26万足够)
+net.netfilter.nf_conntrack_max = 262144
+# TCP 活跃连接保持 2小时 (稳)
+net.netfilter.nf_conntrack_tcp_timeout_established = 7200
+# TCP 垃圾回收加速 (快)
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+# UDP 保持 5分钟 (稳)
+net.netfilter.nf_conntrack_udp_timeout = 60
+net.netfilter.nf_conntrack_udp_timeout_stream = 300
+
+# --- 7. 其他 ---
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+kernel.panic = 10
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
+EOF
+
+    sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
+    success "内核参数已优化。"
+}
+
+# --- [Systemd Global Limits] ---
+optimize_systemd() {
+    info "正在优化 Systemd 全局并发限制..."
+    local systemd_conf="/etc/systemd/system.conf"
+    local systemd_user_conf="/etc/systemd/user.conf"
+
+    # 修改 Systemd 全局配置，确保所有服务都能继承高限制
+    for conf in "$systemd_conf" "$systemd_user_conf"; do
+        if [ -f "$conf" ]; then
+            sed -i '/^DefaultLimitNOFILE=/d' "$conf"
+            echo "DefaultLimitNOFILE=1048576" >> "$conf"
+        fi
+    done
+    success "Systemd 全局限制已提升。"
+}
+
+# --- [Ulimits] ---
+set_ulimits() {
+    info "正在更新 limits.conf..."
+    local limits_conf="/etc/security/limits.conf"
+    
+    sed -i '/# Added by Optimization Script/d' "$limits_conf"
+    sed -i '/soft nofile/d' "$limits_conf"
+    sed -i '/hard nofile/d' "$limits_conf"
+
+    cat <<EOF >> "$limits_conf"
+# Added by Optimization Script
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
+}
+
+disable_ipv6_dhcp() {
+    local dhclient_conf="/etc/dhcp/dhclient.conf"
+    if [ -f "$dhclient_conf" ]; then
+        if ! grep -qF "send dhcp6.oro = [];" "$dhclient_conf"; then
+            echo "send dhcp6.oro = [];" >> "$dhclient_conf"
+        fi
+    fi
+}
+
+# --- [Main] ---
+main() { 
+    clear
+    echo -e "${GREEN}=== VPS Performance Optimization (v20251130) ===${NC}"
+    check_root
+    check_os
+    update_and_install
+    load_kernel_modules
+    apply_sysctl_optimizations
+    optimize_systemd
+    disable_ipv6_dhcp
+    set_ulimits
+    
+    echo
+    success "优化全部完成！"
+    echo -e "${YELLOW}请立即重启服务器以使 Time/Kernel/Systemd 配置生效。${NC}"
+    read -p "是否现在重启? (y/N): " reboot_choice
+    if [[ "$reboot_choice" =~ ^[Yy]$ ]]; then
+        reboot
+    fi
+}
+
+main "$@"
