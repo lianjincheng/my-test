@@ -129,13 +129,9 @@ net.ipv4.tcp_frto = 2
 # --- 4. TCP 智能逻辑 (纯正面收益) ---
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_mtu_probing = 1
-# 拒绝慢启动，暂停后秒恢复
 net.ipv4.tcp_slow_start_after_idle = 0
-# 不缓存历史状态，每次都全力冲刺
 net.ipv4.tcp_no_metrics_save = 0
-# 关闭 ECN，防止国内路由丢包
 net.ipv4.tcp_ecn = 0
-# 防止起步丢包卡顿
 net.ipv4.tcp_fastopen = 0
 
 # --- 系统资源限制解除 ---
