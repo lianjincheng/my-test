@@ -1,10 +1,7 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 & Reality & Argo Temporary Tunnel
-# Adapted for Sing-box v1.11+ (Final Clean Version)
-
-# --- Author Information ---
-AUTHOR_NAME="Singbox 3-Node + Argo Tunnel (Pure IPv4 Ultimate / Modern)"
+# Script for Sing-Box Hysteria2 (WARP) & Argo Tunnel ONLY
+# Simplified Version
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -12,71 +9,58 @@ SINGBOX_CONFIG_DIR="/usr/local/etc/sing-box"
 SINGBOX_CONFIG_FILE="${SINGBOX_CONFIG_DIR}/config.json"
 SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
-# Argo 相关配置
+# Argo Config
 CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
 ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
-ARGO_PORT_FILE="${SINGBOX_CONFIG_DIR}/argo_port.info"
 
+# Hysteria Certs
 HYSTERIA_CERT_DIR="/etc/hysteria"
 HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
 HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 
-PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.last_singbox_script_info"
+PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.singbox_lite_info"
 
-# 默认值
+# Defaults
 DEFAULT_HYSTERIA_MASQUERADE_CN="www.bing.com"
-DEFAULT_REALITY_SNI="itunes.apple.com"
 
-# 全局 SINGBOX_CMD
+# Global Variables
 SINGBOX_CMD=""
-
-# --- 全局变量 ---
 LAST_SERVER_IP=""
-# 智能分流组
+
+# Node Variables
 HY2_SMART_PORT=""
 HY2_SMART_PASSWORD=""
-# 全局直连组
-HY2_DIRECT_PORT=""
-HY2_DIRECT_PASSWORD=""
-# Hy2 混淆密码
 HY2_OBFS_PASSWORD=""
 
-REALITY_DIRECT_PORT=""
-REALITY_DIRECT_UUID=""
-REALITY_DIRECT_PUBLIC_KEY=""
-REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG=""
-REALITY_DIRECT_SHORT_ID=""
-
-# Argo 组
 ARGO_PORT=""
 ARGO_UUID=""
 ARGO_PATH="/argo" 
-# WARP 配置
+
+# WARP Variables
 WARP_PRIVATE_KEY=""
 WARP_PEER_PUBLIC_KEY=""
 WARP_ADDRESS=""
 WARP_RESERVED=""
 
-# --- 颜色定义 ---
+# --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
-BOLD='\033[1m'
 NC='\033[0m'
 
-# --- 辅助函数 ---
+# --- Helpers ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
-    echo -e "${MAGENTA}${BOLD}================================================${NC}"
-    echo -e "${CYAN}${BOLD} Sing-Box 全能管理脚本 (v1.11+ 最终完美版) ${NC}"
-    echo -e "${MAGENTA}${BOLD}================================================${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}   Sing-Box 精简版 (Argo + Hy2-WARP)   ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
 }
 
 load_persistent_info() {
@@ -92,12 +76,6 @@ LAST_SERVER_IP="${LAST_SERVER_IP}"
 HY2_SMART_PORT="${HY2_SMART_PORT}"
 HY2_SMART_PASSWORD="${HY2_SMART_PASSWORD}"
 HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
-REALITY_DIRECT_PORT="${REALITY_DIRECT_PORT}"
-REALITY_DIRECT_UUID="${REALITY_DIRECT_UUID}"
-REALITY_DIRECT_PUBLIC_KEY="${REALITY_DIRECT_PUBLIC_KEY}"
-REALITY_DIRECT_SHORT_ID="${REALITY_DIRECT_SHORT_ID}"
-HY2_DIRECT_PORT="${HY2_DIRECT_PORT}"
-HY2_DIRECT_PASSWORD="${HY2_DIRECT_PASSWORD}"
 ARGO_PORT="${ARGO_PORT}"
 ARGO_UUID="${ARGO_UUID}"
 WARP_PRIVATE_KEY="${WARP_PRIVATE_KEY}"
@@ -118,15 +96,10 @@ attempt_install_package() {
     local package_name="$1"
     local check_cmd="$package_name"
 
-    if [[ "$package_name" == "wireguard-tools" ]]; then
-        check_cmd="wg"
-    elif [[ "$package_name" == "cron" ]]; then
-        check_cmd="crontab"
-    fi
+    [[ "$package_name" == "wireguard-tools" ]] && check_cmd="wg"
+    [[ "$package_name" == "cron" ]] && check_cmd="crontab"
 
-    if command -v "$check_cmd" &>/dev/null; then 
-        return 0
-    fi
+    if command -v "$check_cmd" &>/dev/null; then return 0; fi
     
     info "正在安装依赖: $package_name ..."
     if command -v apt-get &>/dev/null; then
@@ -134,12 +107,7 @@ attempt_install_package() {
     elif command -v yum &>/dev/null; then
         yum install -y "$package_name"
     else
-        error "无法确定包管理器 (非 apt/yum)，请手动安装 $package_name"
-        exit 1
-    fi
-
-    if ! command -v "$check_cmd" &>/dev/null; then
-        error "依赖 $package_name 安装失败！(未找到命令: $check_cmd)"
+        error "无法确定包管理器，请手动安装 $package_name"
         exit 1
     fi
 }
@@ -160,10 +128,9 @@ find_and_set_singbox_cmd() {
 }
 
 get_server_ip() {
-    # 强制 IPv4 (-s4)
     SERVER_IP=$(curl -s4 https://api.ipify.org || curl -s4 ip.sb)
     if [ -z "$SERVER_IP" ]; then
-        error "无法获取服务器 IP，请检查网络连接。"
+        error "无法获取服务器 IP。"
         exit 1
     fi
     LAST_SERVER_IP="$SERVER_IP"
@@ -183,35 +150,29 @@ install_cloudflared() {
     case "$(uname -m)" in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
-        *) error "Cloudflared 不支持的架构: $(uname -m)"; exit 1 ;;
+        *) error "架构不支持: $(uname -m)"; exit 1 ;;
     esac
     
     local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-    # 强制 IPv4 下载
     (command -v curl>/dev/null 2>&1 && curl -4 -L -o "$CLOUDFLARED_PATH" "$URL") || (command -v wget>/dev/null 2>&1 && wget -4 -O "$CLOUDFLARED_PATH" "$URL")
     
     if [ ! -f "$CLOUDFLARED_PATH" ]; then
-        error "Cloudflared 下载失败，文件不存在。"
+        error "Cloudflared 下载失败。"
         exit 1
     fi
-
     chmod +x "$CLOUDFLARED_PATH"
-    success "Cloudflared 安装成功。"
 }
 
 start_argo_tunnel() {
     pkill -f cloudflared
-    info "正在启动 Argo 临时隧道 (端口转发: $ARGO_PORT)..."
-    
+    info "启动 Argo 隧道 (端口转发: $ARGO_PORT)..."
     echo "" > "$ARGO_LOG_FILE"
 
-    # 1. 禁用 IPv6 (--edge-ip-version 4)
-    # 2. 启用 HTTP2 (--protocol http2)
     nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version 4 --no-autoupdate --protocol http2 --retries 10 > "$ARGO_LOG_FILE" 2>&1 &
     
     sleep 2
     if ! pgrep -f cloudflared > /dev/null; then
-        error "Cloudflared 进程启动失败！"
+        error "Cloudflared 启动失败！"
         cat "$ARGO_LOG_FILE"
         return 1
     fi
@@ -222,33 +183,18 @@ start_argo_tunnel() {
 }
 
 wait_for_argo_connection() {
-    info "正在验证 Argo 隧道连通性 (最多等待 30 秒)..."
+    info "等待 Argo 连接 (30s)..."
     local timeout=30
     local elapsed=0
-    
     while [ $elapsed -lt $timeout ]; do
         if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
-            success "Argo 隧道已成功建立！"
+            success "Argo 隧道建立成功！"
             return 0
         fi
-        
-        if ! pgrep -f cloudflared > /dev/null; then
-            error "检测到 Cloudflared 进程意外退出！"
-            return 1
-        fi
-        
         sleep 1
         ((elapsed++))
-        echo -ne "."
     done
-    
-    echo ""
-    error "Argo 隧道启动超时 (30秒内未连接成功)。"
-    warn "以下是 Argo 日志的最后 10 行，请检查错误原因："
-    echo "------------------------------------------------"
-    tail -n 10 "$ARGO_LOG_FILE"
-    echo "------------------------------------------------"
-    warn "常见原因：IP 被 Cloudflare 限制、网络不通、或 Cloudflare 服务抖动。"
+    error "Argo 连接超时，请检查日志。"
     return 1
 }
 
@@ -258,50 +204,32 @@ install_singbox_core() {
         return 0
     fi
     
-    info "正在获取 Sing-box 最新版本信息..."
-    
-    # 动态获取最新版本 Tag
-    local latest_version_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
-    
-    if [ -z "$latest_version_tag" ] || [ "$latest_version_tag" == "null" ]; then
-        warn "获取最新版本失败，尝试使用备用版本 v1.11.1"
-        latest_version_tag="v1.11.1"
-    fi
-    
-    info "准备安装 Sing-box ${latest_version_tag} ..."
+    info "安装 Sing-box..."
+    local latest_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+    [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ] && latest_tag="v1.11.1"
     
     local ARCH
     case "$(uname -m)" in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
-        *) error "Sing-box 不支持的架构: $(uname -m)"; exit 1 ;;
+        *) error "架构不支持"; exit 1 ;;
     esac
     
-    local version_num=${latest_version_tag#v}
-    local download_url="https://github.com/SagerNet/sing-box/releases/download/${latest_version_tag}/sing-box-${version_num}-linux-${ARCH}.tar.gz"
+    local ver=${latest_tag#v}
+    local url="https://github.com/SagerNet/sing-box/releases/download/${latest_tag}/sing-box-${ver}-linux-${ARCH}.tar.gz"
     
     local tmp_dir=$(mktemp -d)
-    if ! curl -4 -L -o "${tmp_dir}/sing-box.tar.gz" "$download_url"; then
-        error "Sing-box 下载失败！请检查网络。"
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
+    curl -4 -L -o "${tmp_dir}/sing-box.tar.gz" "$url" || { error "下载失败"; exit 1; }
     
     tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"
-    install -m 755 "${tmp_dir}/sing-box-${version_num}-linux-${ARCH}/sing-box" "$SINGBOX_INSTALL_PATH_EXPECTED"
+    install -m 755 "${tmp_dir}/sing-box-${ver}-linux-${ARCH}/sing-box" "$SINGBOX_INSTALL_PATH_EXPECTED"
     rm -rf "$tmp_dir"
     find_and_set_singbox_cmd
-
-    if [ ! -x "$SINGBOX_CMD" ]; then
-        error "Sing-box 安装失败，可执行文件未找到。"
-        exit 1
-    fi
-    success "Sing-box ${latest_version_tag} 安装完成。"
 }
 
 setup_warp() {
     if [ -n "$WARP_PRIVATE_KEY" ]; then return 0; fi
-    info "配置 WARP..."
+    info "配置 WARP 账户..."
     attempt_install_package "wireguard-tools"
     attempt_install_package "jq"
     
@@ -315,7 +243,7 @@ setup_warp() {
     WARP_RESERVED="[0,0,0]"
 
     if [[ -z "$WARP_ADDRESS" || "$WARP_ADDRESS" == "null" ]]; then
-        error "WARP 注册失败，无法获取 IP 地址。"
+        error "WARP 注册失败。"
         exit 1
     fi
 }
@@ -326,16 +254,6 @@ generate_self_signed_cert() {
     openssl req -new -x509 -days 36500 -nodes -subj "/CN=$DEFAULT_HYSTERIA_MASQUERADE_CN" -keyout "$HYSTERIA_CERT_KEY" -out "$HYSTERIA_CERT_PEM"
 }
 
-generate_single_reality_credentials() {
-    local -n _uuid=$1 _priv=$2 _pub=$3 _sid=$4
-    find_and_set_singbox_cmd
-    _uuid=$($SINGBOX_CMD generate uuid)
-    local KP=$($SINGBOX_CMD generate reality-keypair)
-    _priv=$(echo "$KP" | awk '/PrivateKey/{print $2}')
-    _pub=$(echo "$KP" | awk '/PublicKey/{print $2}')
-    _sid=$(openssl rand -hex 8)
-}
-
 create_config_json() {
     find_and_set_singbox_cmd
     mkdir -p "$SINGBOX_CONFIG_DIR"
@@ -343,14 +261,7 @@ create_config_json() {
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "error", "timestamp": true },
-  "dns": {
-    "servers": [
-      {
-        "type": "udp",
-        "server": "1.1.1.1"
-      }
-    ]
-  },
+  "dns": { "servers": [ { "type": "udp", "server": "1.1.1.1" } ] },
   "endpoints": [
     {
       "type": "wireguard",
@@ -359,8 +270,7 @@ create_config_json() {
       "private_key": "${WARP_PRIVATE_KEY}",
       "peers": [
         {
-          "address": "162.159.192.1",
-          "port": 2408,
+          "address": "162.159.192.1", "port": 2408,
           "public_key": "${WARP_PEER_PUBLIC_KEY}",
           "allowed_ips": ["0.0.0.0/0"],"persistent_keepalive_interval": 25,
           "reserved": ${WARP_RESERVED}
@@ -380,26 +290,6 @@ create_config_json() {
     },
     {
       "type": "vless",
-      "tag": "reality-direct",
-      "listen": "::",
-      "listen_port": ${REALITY_DIRECT_PORT},
-      "users": [ { "uuid": "${REALITY_DIRECT_UUID}", "flow": "xtls-rprx-vision" } ],
-      "tls": {
-        "enabled": true, "server_name": "${DEFAULT_REALITY_SNI}",
-        "reality": { "enabled": true, "handshake": { "server": "${DEFAULT_REALITY_SNI}", "server_port": 443 }, "private_key": "${REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG}", "short_id": "${REALITY_DIRECT_SHORT_ID}","max_time_difference": "1m" }
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hy2-direct",
-      "listen": "::",
-      "listen_port": ${HY2_DIRECT_PORT},
-      "users": [ { "password": "${HY2_DIRECT_PASSWORD}" } ],
-      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
-      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
-    },
-    {
-      "type": "vless",
       "tag": "vless-argo",
       "listen": "127.0.0.1",
       "listen_port": ${ARGO_PORT},
@@ -408,18 +298,13 @@ create_config_json() {
     }
   ],
   "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
+    { "type": "direct", "tag": "direct" }
   ],
   "route": {
     "rules": [
       { "action": "sniff" },
       { "protocol": "dns", "action": "hijack-dns" },
       { "action": "resolve", "strategy": "ipv4_only" },
-      { "inbound": "hy2-direct", "outbound": "direct" },
-      { "inbound": "reality-direct", "outbound": "direct" },
       { "inbound": "vless-argo", "outbound": "direct" },
       { "inbound": "hy2-smart", "outbound": "warp-out" }
     ]
@@ -448,45 +333,29 @@ EOF
 display_and_store_config_info() {
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 1. [智能] Hysteria2 (WARP出站)${NC}"
-    echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Smart"
-    echo
-    echo -e "${GREEN} 2. [直连] Reality (TCP-Vision)${NC}"
-    echo -e "    vless://${REALITY_DIRECT_UUID}@${LAST_SERVER_IP}:${REALITY_DIRECT_PORT}?security=reality&sni=${DEFAULT_REALITY_SNI}&fp=firefox&pbk=${REALITY_DIRECT_PUBLIC_KEY}&sid=${REALITY_DIRECT_SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Reality-Direct"
-    echo
-    echo -e "${GREEN} 3. [直连] Hysteria2 (备用)${NC}"
-    echo -e "    hy2://${HY2_DIRECT_PASSWORD}@${LAST_SERVER_IP}:${HY2_DIRECT_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-Direct"
+    echo -e "    hy2://${HY2_SMART_PASSWORD}@${LAST_SERVER_IP}:${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}#Hy2-WARP"
     echo
     
     echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
-    info "正在从日志文件抓取域名..."
-    echo
     local ARGO_DOMAIN=""
     if [ -f "$ARGO_LOG_FILE" ]; then
         ARGO_DOMAIN=$(grep -a "trycloudflare.com" "$ARGO_LOG_FILE" | tail -n 10 | grep -o 'https://.*trycloudflare.com' | sed 's/https:\/\///' | head -n 1)
     fi
     
     if [ -n "$ARGO_DOMAIN" ]; then
-        success ${YELLOW}"抓取成功！当前隧道域名: ${ARGO_DOMAIN}${NC}"
-        echo
-        echo -e "${YELLOW}说明: 以下生成 优选域名节点 (已跳过 yg4, yg11)${NC}"
+        success ${YELLOW}"域名抓取成功: ${ARGO_DOMAIN}${NC}"
         echo
         local base_domain="ygkkk.dpdns.org"
-        for i in {1..13}; do
-            # 跳过已失效的 yg4 和 yg11
-            if [[ "$i" -eq 4 || "$i" -eq 11 ]]; then
-                continue
-            fi
-
+        for i in {1..3}; do
+             # 仅展示前3个优选，避免刷屏
             local current_cf_ip="yg${i}.${base_domain}"
-            local node_name="Argo-YG${i}"
-            local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=firefox#${node_name}"
-            
+            local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=firefox#Argo-YG${i}"
             echo -e "${GREEN} [Argo] 优选节点 ${i} (${current_cf_ip})${NC}"
             echo -e "    ${argo_link}"
         done
+        echo "    (更多优选IP可自行替换地址)"
     else
-        error "无法获取 Argo 域名 (虽然隧道已连接)。"
-        warn "请运行 'cat $ARGO_LOG_FILE' 查看详情。"
+        error "Argo 域名获取失败，请检查日志。"
     fi
     
     echo -e "${MAGENTA}====================================================${NC}"
@@ -499,62 +368,38 @@ install_all_nodes() {
     get_server_ip
     setup_warp
 
-    if lsof -i :443 >/dev/null 2>&1; then
-        warn "443 端口被占用，Reality 将使用随机端口。"
-        REALITY_DIRECT_PORT=$(shuf -i 10000-65535 -n 1)
-    else
-        REALITY_DIRECT_PORT=443
-    fi
     HY2_SMART_PORT=$(shuf -i 10000-65535 -n 1)
-    HY2_DIRECT_PORT=$(shuf -i 10000-65535 -n 1)
     ARGO_PORT=$(shuf -i 10000-65535 -n 1)
     
     HY2_SMART_PASSWORD=$(generate_random_password)
-    HY2_DIRECT_PASSWORD=$(generate_random_password)
     HY2_OBFS_PASSWORD=$(generate_random_password)
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
-    generate_single_reality_credentials REALITY_DIRECT_UUID REALITY_DIRECT_PRIVATE_KEY_FOR_CONFIG REALITY_DIRECT_PUBLIC_KEY REALITY_DIRECT_SHORT_ID
     generate_self_signed_cert
 
-    # 1. 创建配置
     create_config_json
     
-    # 2. 检查语法
-    info "正在检查配置文件语法..."
     if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
-        error "配置文件语法检查失败！"
+        error "配置生成有误。"
         exit 1
     fi
 
-    # 3. 启动 Sing-box
     create_systemd_service
     systemctl restart sing-box
 
     sleep 2
     if ! systemctl is-active --quiet sing-box; then
-        error "Sing-box 服务启动失败！"
-        journalctl -u sing-box --no-pager -n 20
+        error "Sing-box 启动失败，请检查日志 (journalctl -u sing-box)。"
         exit 1
-    else
-        success "Sing-box 服务已成功启动。"
     fi
+    success "Sing-box 已启动。"
     
-    # 4. 启动 Argo
     start_argo_tunnel
-    
-    # 5. 等待 Argo 连通
     if wait_for_argo_connection; then
         display_and_store_config_info
-    else
-        error "Argo 隧道建立失败，跳过节点展示。"
     fi
     
     echo
-    echo -e "${YELLOW}[重要提醒] 请手动在防火墙放行以下端口：${NC}"
-    echo -e "   Reality TCP: ${REALITY_DIRECT_PORT}"
-    echo -e "   Hy2 UDP: ${HY2_SMART_PORT}"
-    echo -e "   Hy2 UDP: ${HY2_DIRECT_PORT}"
-    echo
+    echo -e "${YELLOW}请放行端口 UDP: ${HY2_SMART_PORT}${NC}"
 }
 
 uninstall_singbox() {
@@ -566,21 +411,20 @@ uninstall_singbox() {
         rm -rf "$SINGBOX_CONFIG_DIR"
         rm -rf "$HYSTERIA_CERT_DIR"
         
-        info "清理 Cloudflared..."
         pkill -f cloudflared
         (crontab -l | grep -v "cloudflared") | crontab -
         rm -f "$CLOUDFLARED_PATH"
         
-        success "卸载完成。"
+        success "已卸载。"
     fi
 }
 
 show_menu() {
     clear
     print_author_info
-    echo "1. 安装/重置 所有节点 (Hy2 + Reality + Argo)"
-    echo "2. 查看节点链接 (含 Argo 域名刷新)"
-    echo "3. 重启 Sing-box 服务"
+    echo "1. 安装/重置 (Hy2-WARP + Argo)"
+    echo "2. 查看节点"
+    echo "3. 重启服务"
     echo "4. 卸载"
     echo "0. 退出"
     read -p "选择: " choice
