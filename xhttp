@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================================================
-#  Argosbx 精简版 - 仅 Vless-xhttp-reality-enc 节点
-#  Target: Xray-core (Custom)
+#  Xray Vless-xhttp-reality-enc 管理脚本 (菜单版)
+#  Target Core: yonggekkk Custom Xray (with vlessenc)
 # =========================================================
 
 # --- 基础配置 ---
@@ -10,94 +10,160 @@ INSTALL_DIR="/root/xray_enc_node"
 CONFIG_FILE="${INSTALL_DIR}/config.json"
 XRAY_BIN="${INSTALL_DIR}/xray"
 SERVICE_FILE="/etc/systemd/system/xray-enc.service"
+INFO_FILE="${INSTALL_DIR}/.xray_enc_info"
 
-# 默认伪装域名 (原脚本默认值为 apple.com)
-REALITY_SNI="apple.com"
+# 默认伪装域名
+DEFAULT_REALITY_SNI="apple.com"
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 1. 环境检查与依赖安装 ---
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}错误：请使用 root 权限运行此脚本。${NC}"
-    exit 1
-fi
+# --- 全局变量 (用于读取/保存) ---
+UUID=""
+PORT=""
+PRIVATE_KEY=""
+PUBLIC_KEY=""
+SHORT_ID=""
+DECRYPTION_KEY=""
+ENCRYPTION_KEY=""
+REALITY_SNI=""
+SERVER_IP=""
 
-echo -e "${GREEN}1. 安装必要依赖...${NC}"
-if command -v apt-get >/dev/null; then
-    apt-get update -y && apt-get install -y curl wget tar jq openssl
-elif command -v yum >/dev/null; then
-    yum install -y curl wget tar jq openssl
-else
-    echo -e "${YELLOW}未检测到 apt 或 yum，尝试直接运行...${NC}"
-fi
+# --- 辅助函数 ---
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
-mkdir -p "$INSTALL_DIR"
+# --- 检查 Root ---
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "必须使用 root 权限运行此脚本。"
+        exit 1
+    fi
+}
 
-# --- 2. 下载专用 Xray 内核 ---
-# 说明：必须下载原作者提供的内核，因为包含标准的 Xray 没有的 vlessenc 功能
-echo -e "${GREEN}2. 下载 Xray 专用内核...${NC}"
-ARCH=$(uname -m)
-case "$ARCH" in
-    aarch64) CPU="arm64" ;;
-    x86_64) CPU="amd64" ;;
-    *) echo -e "${RED}不支持的架构: $ARCH${NC}"; exit 1 ;;
-esac
+# --- 检查/安装依赖 ---
+check_dependencies() {
+    local deps=("curl" "wget" "tar" "jq" "openssl")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            info "正在安装依赖: $dep ..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -y && apt-get install -y "$dep"
+            elif command -v yum &>/dev/null; then
+                yum install -y "$dep"
+            else
+                warn "无法自动安装 $dep，请手动安装。"
+            fi
+        fi
+    done
+}
 
-# 使用原脚本的下载源
-DOWNLOAD_URL="https://github.com/yonggekkk/argosbx/releases/download/argosbx/xray-$CPU"
+# --- 保存配置信息 ---
+save_info() {
+    cat > "$INFO_FILE" <<EOF
+UUID="${UUID}"
+PORT="${PORT}"
+PRIVATE_KEY="${PRIVATE_KEY}"
+PUBLIC_KEY="${PUBLIC_KEY}"
+SHORT_ID="${SHORT_ID}"
+DECRYPTION_KEY="${DECRYPTION_KEY}"
+ENCRYPTION_KEY="${ENCRYPTION_KEY}"
+REALITY_SNI="${REALITY_SNI}"
+EOF
+}
 
-# 尝试 curl 下载，失败则尝试 wget
-if command -v curl >/dev/null; then
-    curl -L -o "$XRAY_BIN" "$DOWNLOAD_URL" --retry 2
-elif command -v wget >/dev/null; then
-    wget -O "$XRAY_BIN" "$DOWNLOAD_URL" --tries=2
-fi
+# --- 加载配置信息 ---
+load_info() {
+    if [ -f "$INFO_FILE" ]; then
+        source "$INFO_FILE"
+        return 0
+    else
+        return 1
+    fi
+}
 
-if [ ! -f "$XRAY_BIN" ]; then
-    echo -e "${RED}内核下载失败，请检查网络连接。${NC}"
-    exit 1
-fi
+# --- 获取 IP ---
+get_ip() {
+    SERVER_IP=$(curl -s4m5 https://icanhazip.com -k || curl -s6m5 https://icanhazip.com -k)
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP=$(curl -s4m5 ip.sb -k || curl -s6m5 ip.sb -k)
+    fi
+    if [ -z "$SERVER_IP" ]; then
+        SERVER_IP="127.0.0.1"
+        warn "无法获取公网 IP，已使用 127.0.0.1"
+    fi
+}
 
-chmod +x "$XRAY_BIN"
-CURRENT_VER=$("$XRAY_BIN" version 2>/dev/null | head -n 1)
-echo -e "${GREEN}内核安装成功: $CURRENT_VER${NC}"
+# --- 安装核心逻辑 ---
+install_node() {
+    check_dependencies
+    mkdir -p "$INSTALL_DIR"
+    
+    info "正在检测架构并下载专用内核..."
+    local ARCH=$(uname -m)
+    local CPU=""
+    case "$ARCH" in
+        aarch64) CPU="arm64" ;;
+        x86_64) CPU="amd64" ;;
+        *) error "不支持的架构: $ARCH"; exit 1 ;;
+    esac
 
-# --- 3. 生成密钥与配置参数 ---
-echo -e "${GREEN}3. 生成加密密钥与配置参数...${NC}"
+    # 必须使用 yonggekkk 的源，因为它包含 vlessenc
+    local DOWNLOAD_URL="https://github.com/yonggekkk/argosbx/releases/download/argosbx/xray-$CPU"
+    
+    # 尝试下载
+    if command -v curl &>/dev/null; then
+        curl -L -o "$XRAY_BIN" "$DOWNLOAD_URL" --retry 3
+    else
+        wget -O "$XRAY_BIN" "$DOWNLOAD_URL" --tries=3
+    fi
 
-# 生成 UUID
-UUID=$("$XRAY_BIN" uuid)
-if [ -z "$UUID" ]; then echo -e "${RED}UUID 生成失败${NC}"; exit 1; fi
+    if [ ! -f "$XRAY_BIN" ]; then
+        error "核心下载失败！请检查网络。"
+        exit 1
+    fi
+    chmod +x "$XRAY_BIN"
+    
+    # 验证 vlessenc 命令是否存在 (确保是定制内核)
+    if ! "$XRAY_BIN" help | grep -q "vlessenc"; then
+        warn "下载的内核似乎不支持 vlessenc，尝试强制继续..."
+    fi
 
-# 生成 Reality 密钥对
-# [重要] 原脚本使用的内核特性：Public Key 的字段名显示为 "Password"
-# 必须保留此 grep 逻辑，否则无法获取公钥
-KEY_PAIR=$("$XRAY_BIN" x25519)
-PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
-PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
-SHORT_ID=$(openssl rand -hex 4)
+    info "正在生成密钥与配置..."
+    
+    # 1. UUID
+    UUID=$("$XRAY_BIN" uuid)
 
-# 生成 Vless-ENC 密钥 (核心步骤)
-# 使用原脚本的 sed/cut 逻辑提取
-ENC_KEY_PAIR=$("$XRAY_BIN" vlessenc)
-DECRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"decryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
-ENCRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"encryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
+    # 2. Reality Keys (特殊解析逻辑)
+    # 原脚本注：public_key 在定制内核输出中显示为 "Password"
+    local KEY_PAIR=$("$XRAY_BIN" x25519)
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
+    # !!! 关键点：匹配 Password 而非 Public Key !!!
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
+    SHORT_ID=$(openssl rand -hex 4)
 
-# 随机端口
-PORT=$(shuf -i 10000-65535 -n 1)
+    # 3. Vless Enc Keys
+    local ENC_KEY_PAIR=$("$XRAY_BIN" vlessenc)
+    # 严格沿用原脚本的提取逻辑
+    DECRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"decryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
+    ENCRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"encryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
 
-# --- 4. 生成配置文件 (config.json) ---
-# 完全复刻原脚本的 tag: "xhttp-reality" 配置段
-echo -e "${GREEN}4. 写入配置文件...${NC}"
-cat > "$CONFIG_FILE" <<EOF
+    # 4. Port & SNI
+    PORT=$(shuf -i 10000-65535 -n 1)
+    REALITY_SNI="$DEFAULT_REALITY_SNI"
+
+    info "正在写入配置文件..."
+    cat > "$CONFIG_FILE" <<EOF
 {
-  "log": {
-    "loglevel": "none"
-  },
+  "log": { "loglevel": "none" },
   "inbounds": [
     {
       "tag": "xhttp-reality",
@@ -119,9 +185,7 @@ cat > "$CONFIG_FILE" <<EOF
         "realitySettings": {
           "fingerprint": "chrome",
           "target": "${REALITY_SNI}:443",
-          "serverNames": [
-            "${REALITY_SNI}"
-          ],
+          "serverNames": [ "${REALITY_SNI}" ],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"]
         },
@@ -139,21 +203,16 @@ cat > "$CONFIG_FILE" <<EOF
     }
   ],
   "outbounds": [
-    {
-      "protocol": "freedom",
-      "tag": "direct"
-    }
+    { "protocol": "freedom", "tag": "direct" }
   ]
 }
 EOF
 
-# --- 5. 配置 Systemd 服务 ---
-echo -e "${GREEN}5. 配置系统服务...${NC}"
-cat > "$SERVICE_FILE" <<EOF
+    info "配置系统服务..."
+    cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Xray Vless-Enc Service
+Description=Xray Encrypted Service
 After=network.target
-
 [Service]
 Type=simple
 User=root
@@ -161,46 +220,112 @@ WorkingDirectory=${INSTALL_DIR}
 ExecStart=${XRAY_BIN} run -c ${CONFIG_FILE}
 Restart=on-failure
 RestartSec=5s
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable xray-enc >/dev/null 2>&1
-systemctl restart xray-enc
+    systemctl daemon-reload
+    systemctl enable xray-enc >/dev/null 2>&1
+    systemctl restart xray-enc
+    
+    save_info
+    
+    sleep 2
+    if systemctl is-active --quiet xray-enc; then
+        success "安装并启动成功！"
+        display_info
+    else
+        error "服务启动失败！"
+        journalctl -u xray-enc --no-pager -n 10
+    fi
+}
 
-# --- 6. 生成分享链接与输出 ---
-echo -e "${GREEN}6. 获取 IP 并生成链接...${NC}"
+# --- 显示节点信息 ---
+display_info() {
+    if ! load_info; then
+        error "未找到配置信息，请先安装。"
+        return
+    fi
+    get_ip
+    
+    # 链接构建 (1:1 还原原脚本格式)
+    # vless://uuid@ip:port?encryption=key&flow=vision&security=reality&sni=...&fp=chrome&pbk=...&sid=...&type=xhttp&path=uuid-xh&mode=auto#Name
+    local LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=${ENCRYPTION_KEY}&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto#Xray-Enc-Node"
 
-# 获取 IP (尝试 IPv4 优先，IPv6 备用)
-SERVER_IP=$(curl -s4m5 https://icanhazip.com -k || curl -s6m5 https://icanhazip.com -k)
-if [ -z "$SERVER_IP" ]; then
-    SERVER_IP=$(curl -s4m5 ip.sb -k || curl -s6m5 ip.sb -k)
-fi
-
-# 拼接链接 - 格式与原脚本完全一致
-# 格式: vless://uuid@ip:port?encryption=key&flow=vision&...#name
-LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=${ENCRYPTION_KEY}&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto#Xray-Enc-Node"
-
-sleep 2
-if systemctl is-active --quiet xray-enc; then
-    echo
-    echo -e "${GREEN}=========================================================${NC}"
-    echo -e "${GREEN}       Vless-xhttp-reality-enc 节点部署完成              ${NC}"
-    echo -e "${GREEN}=========================================================${NC}"
-    echo -e " 核心版本: ${CURRENT_VER}"
-    echo -e " 端口: ${PORT}"
-    echo -e " 加密 Key: ${ENCRYPTION_KEY}"
-    echo -e " 伪装域名: ${REALITY_SNI}"
-    echo -e "---------------------------------------------------------"
-    echo -e "${YELLOW}节点分享链接:${NC}"
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${GREEN} 节点类型: Vless-xhttp-reality-enc (Xray定制版)${NC}"
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e " 地址 (IP): ${SERVER_IP}"
+    echo -e " 端口 (Port): ${PORT}"
+    echo -e " 用户 ID (UUID): ${UUID}"
+    echo -e " 加密 Key (Encryption): ${ENCRYPTION_KEY}"
+    echo -e " 伪装域名 (SNI): ${REALITY_SNI}"
+    echo -e " 路径 (Path): ${UUID}-xh"
+    echo -e "----------------------------------------------------"
+    echo -e "${YELLOW}分享链接 (复制导入):${NC}"
     echo -e "${LINK}"
-    echo -e "---------------------------------------------------------"
-    echo -e " 配置文件: ${CONFIG_FILE}"
-    echo -e " 服务控制: systemctl restart xray-enc"
-    echo -e "${GREEN}=========================================================${NC}"
-else
-    echo -e "${RED}错误：Xray 服务启动失败！${NC}"
-    echo -e "请运行 journalctl -u xray-enc -n 20 查看日志。"
-fi
+    echo -e "${MAGENTA}====================================================${NC}"
+}
+
+# --- 卸载 ---
+uninstall_node() {
+    read -p "确定要卸载 Xray-Enc 吗? (y/N): " choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        info "正在停止服务..."
+        systemctl stop xray-enc
+        systemctl disable xray-enc >/dev/null 2>&1
+        rm -f "$SERVICE_FILE"
+        systemctl daemon-reload
+        
+        info "正在删除文件..."
+        rm -rf "$INSTALL_DIR"
+        
+        success "卸载完成。"
+    else
+        info "已取消。"
+    fi
+}
+
+# --- 菜单 ---
+show_menu() {
+    clear
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (Vless-xhttp-enc)   ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "1. 安装 / 重置节点"
+    echo -e "2. 查看节点链接"
+    echo -e "3. 重启服务"
+    echo -e "4. 卸载"
+    echo -e "0. 退出"
+    echo -e "------------------------------------------------"
+    
+    # 状态显示
+    if systemctl is-active --quiet xray-enc; then
+        echo -e "当前状态: ${GREEN}运行中${NC}"
+    else
+        echo -e "当前状态: ${RED}未运行${NC}"
+    fi
+    echo -e "------------------------------------------------"
+    
+    read -p "请选择 [0-4]: " choice
+    case "$choice" in
+        1) install_node ;;
+        2) display_info ;;
+        3) 
+           systemctl restart xray-enc
+           if systemctl is-active --quiet xray-enc; then
+               success "服务已重启"
+           else
+               error "重启失败"
+           fi
+           ;;
+        4) uninstall_node ;;
+        0) exit 0 ;;
+        *) echo "无效输入" ;;
+    esac
+    read -p "按回车键继续..."
+}
+
+# --- 主逻辑 ---
+check_root
+while true; do show_menu; done
