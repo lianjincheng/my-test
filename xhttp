@@ -174,7 +174,7 @@ install_node() {
     info "正在写入配置文件 (UseIP模式 + DNS优化)..."
     cat > "$CONFIG_FILE" <<EOF
 {
-  "log": { "loglevel": "none" },
+  "log": { "loglevel": "error" },
 
   "dns": {
     "servers": [
