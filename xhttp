@@ -4,6 +4,7 @@
 #  Xray Vless-xhttp-reality-enc 管理脚本 (菜单版)
 #  Target Core: yonggekkk Custom Xray (with vlessenc)
 #  Feature: 双栈链接双输出 + UseIP自动路由 + DNS优化 + 强力清理
+#  Fix: 自适应监听地址 (兼容 Sysctl 禁用 IPv6 的环境)
 # =========================================================
 
 # --- 基础配置 ---
@@ -114,6 +115,7 @@ get_ip() {
     IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
     
     # 获取 IPv6 (带备用源)
+    # 如果系统禁用了 IPv6，curl 会直接报错返回空，这是正常的，不会卡住
     IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
 
     if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
@@ -171,7 +173,24 @@ install_node() {
     PORT=$(shuf -i 10000-65535 -n 1)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    info "正在写入配置文件 (UseIP模式 + DNS优化)..."
+    # --- [关键修改] 自适应监听地址 ---
+    # 默认监听 :: (支持 IPv6/IPv4 双栈)
+    local LISTEN_ADDR="::"
+    
+    # 检测 1: 通过 sysctl 检测是否禁用 IPv6
+    if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
+        LISTEN_ADDR="0.0.0.0"
+        info "检测到 IPv6 已被 Sysctl 禁用，切换监听地址为 0.0.0.0"
+    fi
+    
+    # 检测 2: 某些精简系统可能没有 if_inet6 文件
+    if [ ! -f /proc/net/if_inet6 ]; then
+        LISTEN_ADDR="0.0.0.0"
+        info "检测到系统不支持 IPv6 协议栈，切换监听地址为 0.0.0.0"
+    fi
+    # --------------------------------
+
+    info "正在写入配置文件 (UseIP模式 + DNS优化 + 自适应监听)..."
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "error" },
@@ -186,7 +205,7 @@ install_node() {
   "inbounds": [
     {
       "tag": "xhttp-reality",
-      "listen": "::",
+      "listen": "${LISTEN_ADDR}",
       "port": ${PORT},
       "protocol": "vless",
       "settings": {
@@ -312,6 +331,9 @@ display_info() {
 
     if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
         error "未获取到公网IP，无法生成链接。"
+        warn "如果您的 VPS 有内网 IP，请手动替换链接中的 127.0.0.1"
+        local LINK_LOCAL="${LINK_BASE}127.0.0.1${LINK_PARAMS}#Xray-Local"
+        echo -e "${LINK_LOCAL}"
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
@@ -335,7 +357,7 @@ uninstall_node() {
 show_menu() {
     clear
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (双栈输出+自动路由)   ${NC}"
+    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (自动适配IPv4/IPv6环境)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
     echo -e "1. 安装 / 重置节点"
     echo -e "2. 查看节点链接"
