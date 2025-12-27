@@ -3,6 +3,7 @@
 # =========================================================
 #  Xray Vless-xhttp-reality-enc 管理脚本 (菜单版)
 #  Target Core: yonggekkk Custom Xray (with vlessenc)
+#  Feature: 双栈链接双输出 + UseIP自动路由 + DNS优化 + 强力清理
 # =========================================================
 
 # --- 基础配置 ---
@@ -24,7 +25,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 全局变量 (用于读取/保存) ---
+# --- 全局变量 ---
 UUID=""
 PORT=""
 PRIVATE_KEY=""
@@ -33,7 +34,9 @@ SHORT_ID=""
 DECRYPTION_KEY=""
 ENCRYPTION_KEY=""
 REALITY_SNI=""
-SERVER_IP=""
+# IP 变量
+IPV4_ADDR=""
+IPV6_ADDR=""
 
 # --- 辅助函数 ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -46,6 +49,21 @@ check_root() {
     if [[ $EUID -ne 0 ]]; then
         error "必须使用 root 权限运行此脚本。"
         exit 1
+    fi
+}
+
+# --- 强力清理旧进程 ---
+force_cleanup() {
+    # 1. 停止服务
+    if systemctl list-units --full -all | grep -q "xray-enc.service"; then
+        systemctl stop xray-enc
+        systemctl disable xray-enc >/dev/null 2>&1
+    fi
+
+    # 2. 精确清理 Xray 进程
+    local pid=$(pgrep -f "^${XRAY_BIN}")
+    if [ -n "$pid" ]; then
+        kill -9 $pid >/dev/null 2>&1
     fi
 }
 
@@ -90,20 +108,23 @@ load_info() {
     fi
 }
 
-# --- 获取 IP ---
+# --- 获取 IP (双栈独立获取) ---
 get_ip() {
-    SERVER_IP=$(curl -s4m5 https://icanhazip.com -k || curl -s6m5 https://icanhazip.com -k)
-    if [ -z "$SERVER_IP" ]; then
-        SERVER_IP=$(curl -s4m5 ip.sb -k || curl -s6m5 ip.sb -k)
-    fi
-    if [ -z "$SERVER_IP" ]; then
-        SERVER_IP="127.0.0.1"
-        warn "无法获取公网 IP，已使用 127.0.0.1"
+    # 获取 IPv4 (带备用源)
+    IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
+    
+    # 获取 IPv6 (带备用源)
+    IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
+
+    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
+        warn "无法获取任何公网 IP！"
+        IPV4_ADDR="127.0.0.1"
     fi
 }
 
 # --- 安装核心逻辑 ---
 install_node() {
+    force_cleanup
     check_dependencies
     mkdir -p "$INSTALL_DIR"
     
@@ -116,10 +137,8 @@ install_node() {
         *) error "不支持的架构: $ARCH"; exit 1 ;;
     esac
 
-    # 必须使用 yonggekkk 的源，因为它包含 vlessenc
     local DOWNLOAD_URL="https://github.com/yonggekkk/argosbx/releases/download/argosbx/xray-$CPU"
     
-    # 尝试下载
     if command -v curl &>/dev/null; then
         curl -L -o "$XRAY_BIN" "$DOWNLOAD_URL" --retry 3
     else
@@ -132,38 +151,38 @@ install_node() {
     fi
     chmod +x "$XRAY_BIN"
     
-    # 验证 vlessenc 命令是否存在 (确保是定制内核)
     if ! "$XRAY_BIN" help | grep -q "vlessenc"; then
         warn "下载的内核似乎不支持 vlessenc，尝试强制继续..."
     fi
 
     info "正在生成密钥与配置..."
     
-    # 1. UUID
     UUID=$("$XRAY_BIN" uuid)
 
-    # 2. Reality Keys (特殊解析逻辑)
-    # 原脚本注：public_key 在定制内核输出中显示为 "Password"
     local KEY_PAIR=$("$XRAY_BIN" x25519)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
-    # !!! 关键点：匹配 Password 而非 Public Key !!!
     PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
     SHORT_ID=$(openssl rand -hex 4)
 
-    # 3. Vless Enc Keys
     local ENC_KEY_PAIR=$("$XRAY_BIN" vlessenc)
-    # 严格沿用原脚本的提取逻辑
     DECRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"decryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
     ENCRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"encryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
 
-    # 4. Port & SNI
     PORT=$(shuf -i 10000-65535 -n 1)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    info "正在写入配置文件..."
+    info "正在写入配置文件 (UseIP模式 + DNS优化)..."
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "none" },
+
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "8.8.8.8"
+    ]
+  },
+
   "inbounds": [
     {
       "tag": "xhttp-reality",
@@ -202,11 +221,24 @@ install_node() {
       }
     }
   ],
+
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct" }
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {
+        "domainStrategy": "UseIP"
+      }
+    }
   ]
 }
 EOF
+
+    if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
+        error "生成的配置文件语法校验失败！"
+        "$XRAY_BIN" run -test -c "$CONFIG_FILE"
+        exit 1
+    fi
 
     info "配置系统服务..."
     cat > "$SERVICE_FILE" <<EOF
@@ -240,7 +272,7 @@ EOF
     fi
 }
 
-# --- 显示节点信息 ---
+# --- 显示节点信息 (支持双栈同时显示) ---
 display_info() {
     if ! load_info; then
         error "未找到配置信息，请先安装。"
@@ -248,22 +280,40 @@ display_info() {
     fi
     get_ip
     
-    # 链接构建 (1:1 还原原脚本格式)
-    # vless://uuid@ip:port?encryption=key&flow=vision&security=reality&sni=...&fp=chrome&pbk=...&sid=...&type=xhttp&path=uuid-xh&mode=auto#Name
-    local LINK="vless://${UUID}@${SERVER_IP}:${PORT}?encryption=${ENCRYPTION_KEY}&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto#Xray-Enc-Node"
-
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 节点类型: Vless-xhttp-reality-enc (Xray定制版)${NC}"
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e " 地址 (IP): ${SERVER_IP}"
     echo -e " 端口 (Port): ${PORT}"
     echo -e " 用户 ID (UUID): ${UUID}"
     echo -e " 加密 Key (Encryption): ${ENCRYPTION_KEY}"
     echo -e " 伪装域名 (SNI): ${REALITY_SNI}"
     echo -e " 路径 (Path): ${UUID}-xh"
     echo -e "----------------------------------------------------"
-    echo -e "${YELLOW}分享链接 (复制导入):${NC}"
-    echo -e "${LINK}"
+    
+    # 构建链接部分
+    local LINK_BASE="vless://${UUID}@"
+    local LINK_PARAMS=":${PORT}?encryption=${ENCRYPTION_KEY}&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
+    
+    # 1. 输出 IPv4 链接 (如果有)
+    if [ -n "$IPV4_ADDR" ]; then
+        local LINK_V4="${LINK_BASE}${IPV4_ADDR}${LINK_PARAMS}#Xray-IPv4"
+        echo -e "${YELLOW}[IPv4] 分享链接:${NC}"
+        echo -e "${LINK_V4}"
+        echo
+    fi
+
+    # 2. 输出 IPv6 链接 (如果有)
+    if [ -n "$IPV6_ADDR" ]; then
+        local LINK_V6="${LINK_BASE}[${IPV6_ADDR}]${LINK_PARAMS}#Xray-IPv6"
+        echo -e "${YELLOW}[IPv6] 分享链接 (需客户端网络支持IPv6):${NC}"
+        echo -e "${LINK_V6}"
+        echo
+    fi
+
+    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
+        error "未获取到公网IP，无法生成链接。"
+    fi
+
     echo -e "${MAGENTA}====================================================${NC}"
 }
 
@@ -271,15 +321,10 @@ display_info() {
 uninstall_node() {
     read -p "确定要卸载 Xray-Enc 吗? (y/N): " choice
     if [[ "$choice" =~ ^[Yy]$ ]]; then
-        info "正在停止服务..."
-        systemctl stop xray-enc
-        systemctl disable xray-enc >/dev/null 2>&1
+        force_cleanup
         rm -f "$SERVICE_FILE"
         systemctl daemon-reload
-        
-        info "正在删除文件..."
         rm -rf "$INSTALL_DIR"
-        
         success "卸载完成。"
     else
         info "已取消。"
@@ -290,7 +335,7 @@ uninstall_node() {
 show_menu() {
     clear
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (Vless-xhttp-enc)   ${NC}"
+    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (双栈输出+自动路由)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
     echo -e "1. 安装 / 重置节点"
     echo -e "2. 查看节点链接"
@@ -299,7 +344,6 @@ show_menu() {
     echo -e "0. 退出"
     echo -e "------------------------------------------------"
     
-    # 状态显示
     if systemctl is-active --quiet xray-enc; then
         echo -e "当前状态: ${GREEN}运行中${NC}"
     else
