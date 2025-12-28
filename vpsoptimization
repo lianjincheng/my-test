@@ -2,12 +2,6 @@
 #
 # Ultimate VPS Performance Optimization Script (Final Production + Log Fix)
 #
-# Updates from v8.5:
-# 1. [Critical] Added Time Synchronization (NTP/Chrony) fix for Reality/TLS protocols.
-# 2. [Compat] Added OS detection (Exits gracefully on non-Debian/Ubuntu).
-# 3. [System] Tuning Global Systemd limits (DefaultLimitNOFILE).
-# 4. [Logging] Added Systemd Journal log limit (Max 50M).
-#
 
 # --- [Header] ---
 set -e
