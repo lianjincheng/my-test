@@ -145,10 +145,10 @@ net.ipv4.tcp_timestamps = 1
 # 遇到崩溃自动重启
 kernel.panic = 10
 
-# 禁用 IPv6 (配合你的 ipv4_only 策略)
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
+# IPv6开关，1关闭，0开启
+net.ipv6.conf.all.disable_ipv6 = 0
+net.ipv6.conf.default.disable_ipv6 = 0
+net.ipv6.conf.lo.disable_ipv6 = 0
 
 # --- Argo 隧道保活优化 ---
 net.ipv4.tcp_keepalive_time = 60
