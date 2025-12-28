@@ -108,11 +108,13 @@ apply_sysctl_optimizations() {
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# --- 2. 队列优化 (CPU 忙时的缓冲地带) ---
+# --- 2. 队列优化 (CPU 忙时的缓冲地带，ddos防护优化) ---
 # 允许数据包排队，防止 CPU 处理不过来时直接丢包
 net.core.netdev_max_backlog = 32768
 net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_synack_retries = 2
 
 # --- 3. 缓冲区优化  ---
 net.core.rmem_max = 33554432
