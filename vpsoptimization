@@ -154,6 +154,7 @@ net.ipv6.conf.lo.disable_ipv6 = 1
 net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_retries2 = 8
 
 # --- UDP 连接追踪优化 (针对 Hysteria2/QUIC) ---
 # 只有收到单向包时的超时时间 (默认30秒，改为60秒)
