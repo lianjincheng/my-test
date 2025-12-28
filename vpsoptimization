@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Ultimate VPS Performance Optimization Script (Final Production)
+# Ultimate VPS Performance Optimization Script (Final Production + Log Fix)
 #
 # Updates from v8.5:
 # 1. [Critical] Added Time Synchronization (NTP/Chrony) fix for Reality/TLS protocols.
 # 2. [Compat] Added OS detection (Exits gracefully on non-Debian/Ubuntu).
 # 3. [System] Tuning Global Systemd limits (DefaultLimitNOFILE).
-# 4. [Memory] Restored vm.swappiness settings for stability.
+# 4. [Logging] Added Systemd Journal log limit (Max 50M).
 #
 
 # --- [Header] ---
@@ -202,6 +202,31 @@ optimize_systemd() {
     success "Systemd 全局限制已提升。"
 }
 
+# --- [Logging Optimization] (NEW) ---
+optimize_logging() {
+    info "正在优化 Systemd 日志占用 (限制为 50M)..."
+    local journald_conf="/etc/systemd/journald.conf"
+    
+    if [ -f "$journald_conf" ]; then
+        # 使用 sed 智能替换或修改 SystemMaxUse
+        sed -i 's/^#\?SystemMaxUse=.*/SystemMaxUse=50M/g' "$journald_conf"
+        
+        # 如果文件中完全没有这一行（连注释都没有），则追加
+        if ! grep -q "^SystemMaxUse=50M" "$journald_conf"; then
+            echo "SystemMaxUse=50M" >> "$journald_conf"
+        fi
+        
+        # 重启日志服务使配置生效
+        systemctl restart systemd-journald
+        
+        # 显示当前结果
+        local disk_usage=$(journalctl --disk-usage 2>/dev/null | cut -d ' ' -f 7-)
+        success "日志限制已应用。当前占用: $disk_usage"
+    else
+        warn "未找到 $journald_conf，跳过日志优化。"
+    fi
+}
+
 # --- [Ulimits] ---
 set_ulimits() {
     info "正在更新 limits.conf..."
@@ -232,13 +257,14 @@ disable_ipv6_dhcp() {
 # --- [Main] ---
 main() { 
     clear
-    echo -e "${GREEN}=== VPS Performance Optimization (v20251130) ===${NC}"
+    echo -e "${GREEN}=== VPS Performance Optimization (v20251130-LogFix) ===${NC}"
     check_root
     check_os
     update_and_install
     load_kernel_modules
     apply_sysctl_optimizations
     optimize_systemd
+    optimize_logging  # 新增的日志优化步骤
     disable_ipv6_dhcp
     set_ulimits
     
