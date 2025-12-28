@@ -245,15 +245,6 @@ root hard nofile 1048576
 EOF
 }
 
-disable_ipv6_dhcp() {
-    local dhclient_conf="/etc/dhcp/dhclient.conf"
-    if [ -f "$dhclient_conf" ]; then
-        if ! grep -qF "send dhcp6.oro = [];" "$dhclient_conf"; then
-            echo "send dhcp6.oro = [];" >> "$dhclient_conf"
-        fi
-    fi
-}
-
 # --- [Main] ---
 main() { 
     clear
@@ -265,7 +256,6 @@ main() {
     apply_sysctl_optimizations
     optimize_systemd
     optimize_logging  # 新增的日志优化步骤
-    disable_ipv6_dhcp
     set_ulimits
     
     echo
