@@ -157,6 +157,13 @@ install_node() {
         warn "下载的内核似乎不支持 vlessenc，尝试强制继续..."
     fi
 
+    # --- [新增] 下载 GeoIP/GeoSite 数据库 ---
+    info "下载路由规则数据库 (GeoIP/GeoSite)..."
+    curl -L -o "$INSTALL_DIR/geoip.dat" "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"
+    curl -L -o "$INSTALL_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
+    # -------------------------------------
+
+
     info "正在生成密钥与配置..."
     
     UUID=$("$XRAY_BIN" uuid)
@@ -248,8 +255,16 @@ install_node() {
       "settings": {
         "domainStrategy": "UseIP"
       }
-    }
-  ]
+    },
+    { "protocol": "blackhole", "tag": "blocked" }
+  ],
+"routing": {
+    "domainStrategy": "UseIP",
+    "rules": [
+      { "type": "field", "ip": [ "geoip:private", "geoip:cn" ], "outboundTag": "blocked" },
+      { "type": "field", "domain": [ "geosite:cn" ], "outboundTag": "blocked" }
+    ]
+  }
 }
 EOF
 
