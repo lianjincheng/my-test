@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script for Sing-Box Hysteria2 (WARP) & Argo Tunnel
-# Final Universal Version (Fixed DNS/IP Detection/Process Cleanup)
+# Final Universal Version (Fixed DNS/IP Detection/Process Cleanup/Sing-box 1.12+ Fix)
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -54,7 +54,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Sing-Box 全能版 (Argo+Hy2+WARP) [无Bug修正]   ${NC}"
+    echo -e "${CYAN}   Sing-Box 全能版 (Argo+Hy2+WARP) [完美修正]   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
 }
 
@@ -143,14 +143,10 @@ find_and_set_singbox_cmd() {
 
 # --- [修复] 稳健的双栈 IP 获取逻辑 ---
 get_server_ip() {
-    # 显式尝试获取 IPv4
     IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k 2>/dev/null)
-    
-    # 显式尝试获取 IPv6
     IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k 2>/dev/null)
 
     if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
-        # 最后的挣扎：自动模式
         local ANY_IP=$(curl -sm5 https://icanhazip.com -k 2>/dev/null)
         if [[ "$ANY_IP" == *":"* ]]; then
             IPV6_ADDR="$ANY_IP"
@@ -178,7 +174,6 @@ install_cloudflared() {
     esac
     
     local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-    # 去掉 -4，支持 IPv6 下载
     curl -L -o "$CLOUDFLARED_PATH" "$URL" || wget -O "$CLOUDFLARED_PATH" "$URL"
     
     if [ ! -f "$CLOUDFLARED_PATH" ]; then error "Cloudflared 下载失败"; exit 1; fi
@@ -186,13 +181,11 @@ install_cloudflared() {
 }
 
 start_argo_tunnel() {
-    # 确保没有残留
     local cf_pid=$(pgrep -f "^${CLOUDFLARED_PATH}")
     [ -n "$cf_pid" ] && kill -9 $cf_pid
     
     info "启动 Argo 隧道..."
     echo "" > "$ARGO_LOG_FILE"
-    # 使用 auto 模式
     nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10 > "$ARGO_LOG_FILE" 2>&1 &
     sleep 2
     local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10 > $ARGO_LOG_FILE 2>&1 &"
@@ -232,7 +225,6 @@ install_singbox_core() {
     local ver=${latest_tag#v}
     local url="https://github.com/SagerNet/sing-box/releases/download/${latest_tag}/sing-box-${ver}-linux-${ARCH}.tar.gz"
     local tmp_dir=$(mktemp -d)
-    # 去掉 -4
     curl -L -o "${tmp_dir}/sing-box.tar.gz" "$url" || { error "Sing-box 下载失败"; exit 1; }
     
     tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"
@@ -247,7 +239,6 @@ setup_warp() {
     
     local PRIV=$(wg genkey)
     local PUB=$(echo "$PRIV" | wg pubkey)
-    # 去掉 -4，纯 IPv6 也能注册
     local RESP=$(curl -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
     
     WARP_PRIVATE_KEY="$PRIV"
@@ -274,7 +265,13 @@ create_config_json() {
     local HAS_WARP=false
     if [ -n "$WARP_ADDRESS" ]; then HAS_WARP=true; fi
 
-    # [关键修复] DNS 增加 IPv6 服务器，防止纯 IPv6 机器无法解析域名
+    # [优化] 根据 IP 自动选择默认 DNS (如果只有 IPv6，则默认用 IPv6 DNS)
+    local DEFAULT_DNS_TAG="dns-remote"
+    if [ -z "$IPV4_ADDR" ] && [ -n "$IPV6_ADDR" ]; then
+        DEFAULT_DNS_TAG="dns-remote-v6"
+    fi
+
+    # [关键修复] DNS 增加 Tag
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "info", "timestamp": true },
@@ -287,7 +284,6 @@ create_config_json() {
 EOF
 
     if [ "$HAS_WARP" = true ]; then
-        # 使用域名连接 WARP，兼容 v4/v6
         cat >> "$SINGBOX_CONFIG_FILE" <<EOF
   "endpoints": [
     {
@@ -348,9 +344,10 @@ EOF
         echo '      { "inbound": "hy2-smart", "outbound": "direct" }' >> "$SINGBOX_CONFIG_FILE"
     fi
     
+    # [关键修复] 明确指定 default_domain_resolver
     cat >> "$SINGBOX_CONFIG_FILE" <<EOF
     ],
-    "default_domain_resolver": "dns-remote"
+    "default_domain_resolver": "${DEFAULT_DNS_TAG}"
   } 
 }
 EOF
@@ -405,7 +402,6 @@ display_and_store_config_info() {
             local argo_link="vless://${ARGO_UUID}@${current_cf_ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=firefox#Argo-YG${i}"
             echo -e "${GREEN} [Argo] 节点 ${i}${NC}\n    ${argo_link}"
         done
-        echo "    (Argo 隧道自适应 IPv4/IPv6，以上链接通用)"
     else
         error "Argo 域名获取失败，请检查日志。"
     fi
