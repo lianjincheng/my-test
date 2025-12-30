@@ -280,8 +280,8 @@ create_config_json() {
   "log": { "level": "info", "timestamp": true },
   "dns": { 
     "servers": [ 
-      { "type": "udp", "server": "1.1.1.1" },
-      { "type": "udp", "server": "2606:4700:4700::1111" }
+      { "tag": "dns-remote", "type": "udp", "server": "1.1.1.1" },
+      { "tag": "dns-remote-v6","type": "udp", "server": "2606:4700:4700::1111" }
     ] 
   },
 EOF
@@ -348,7 +348,12 @@ EOF
         echo '      { "inbound": "hy2-smart", "outbound": "direct" }' >> "$SINGBOX_CONFIG_FILE"
     fi
     
-    echo '    ] } }' >> "$SINGBOX_CONFIG_FILE"
+    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
+    ],
+    "default_domain_resolver": "dns-remote"
+  } 
+}
+EOF
 }
 
 create_systemd_service() {
