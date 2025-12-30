@@ -1,7 +1,9 @@
 #!/bin/bash
 
-# Script for Sing-Box Hysteria2 (WARP) & Argo Tunnel
-# Final Universal Version (Fixed DNS/IP Detection/Process Cleanup/Sing-box 1.12+ Fix)
+# =========================================================
+#  Sing-Box 全能版 (Argo Systemd 守护版)
+#  Fix: 解决 Argo 进程异常退出问题，改用 Systemd 托管
+# =========================================================
 
 # --- Configuration ---
 SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
@@ -10,7 +12,9 @@ SINGBOX_CONFIG_FILE="${SINGBOX_CONFIG_DIR}/config.json"
 SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
 
 CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
+# Argo 现在的日志由 Systemd 托管，我们为了抓取域名，将其重定向到文件
 ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
+ARGO_SERVICE_FILE="/etc/systemd/system/argo.service"
 
 HYSTERIA_CERT_DIR="/etc/hysteria"
 HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
@@ -54,7 +58,7 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 print_author_info() {
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Sing-Box 全能版 (Argo+Hy2+WARP) [完美修正]   ${NC}"
+    echo -e "${CYAN}   Sing-Box 全能版 (Systemd 守护架构)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
 }
 
@@ -81,40 +85,38 @@ check_root() {
     if [ "$(id -u)" -ne 0 ]; then error "需 root 权限运行。"; exit 1; fi
 }
 
-# --- 强力清理函数 (精确匹配，防止误杀) ---
+# --- [升级] 强力清理函数 ---
 force_cleanup() {
     info "正在执行环境清理..."
     
-    # 停止服务
+    # 停止 Systemd 服务
     if systemctl list-units --full -all | grep -q "sing-box.service"; then
         systemctl stop sing-box
         systemctl disable sing-box >/dev/null 2>&1
     fi
+    
+    # 停止 Argo 服务
+    if systemctl list-units --full -all | grep -q "argo.service"; then
+        systemctl stop argo
+        systemctl disable argo >/dev/null 2>&1
+    fi
 
-    # 杀死残留 Sing-box (只杀本脚本安装路径下的)
+    # 清理残留进程 (双重保险)
     local sb_pid=$(pgrep -f "^${SINGBOX_INSTALL_PATH_EXPECTED}")
-    if [ -n "$sb_pid" ]; then
-        warn "清理残留 Sing-box 进程 (PID: $sb_pid)..."
-        kill -9 $sb_pid
-    fi
-
-    # 杀死残留 Cloudflared
+    [ -n "$sb_pid" ] && kill -9 $sb_pid
+    
     local cf_pid=$(pgrep -f "^${CLOUDFLARED_PATH}")
-    if [ -n "$cf_pid" ]; then
-        warn "清理残留 Cloudflared 进程 (PID: $cf_pid)..."
-        kill -9 $cf_pid
-    fi
+    [ -n "$cf_pid" ] && kill -9 $cf_pid
 
-    # 清理 Crontab
+    # 清理 Crontab (旧版残留)
     if crontab -l >/dev/null 2>&1; then
-        local current_cron=$(crontab -l)
-        if echo "$current_cron" | grep -qE "cloudflared|sing-box"; then
-            (crontab -l 2>/dev/null | grep -v "cloudflared" | grep -v "sing-box") | crontab -
-            info "已清理相关定时任务。"
-        fi
+        (crontab -l 2>/dev/null | grep -v "cloudflared" | grep -v "sing-box") | crontab -
     fi
 
+    # 清理日志和旧服务文件
     rm -f "$ARGO_LOG_FILE"
+    rm -f "$ARGO_SERVICE_FILE"
+    
     sleep 1
     success "环境清理完成。"
 }
@@ -141,7 +143,6 @@ find_and_set_singbox_cmd() {
     fi
 }
 
-# --- [修复] 稳健的双栈 IP 获取逻辑 ---
 get_server_ip() {
     IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k 2>/dev/null)
     IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k 2>/dev/null)
@@ -180,32 +181,64 @@ install_cloudflared() {
     chmod +x "$CLOUDFLARED_PATH"
 }
 
-start_argo_tunnel() {
-    local cf_pid=$(pgrep -f "^${CLOUDFLARED_PATH}")
-    [ -n "$cf_pid" ] && kill -9 $cf_pid
+# --- [升级] Argo 系统服务化 ---
+create_argo_service() {
+    info "配置 Argo 系统服务..."
     
-    info "启动 Argo 隧道..."
+    # 清空日志文件，准备接收新日志
     echo "" > "$ARGO_LOG_FILE"
-    nohup "$CLOUDFLARED_PATH" tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10 > "$ARGO_LOG_FILE" 2>&1 &
+    chmod 666 "$ARGO_LOG_FILE"
+
+    cat > "$ARGO_SERVICE_FILE" <<EOF
+[Unit]
+Description=Cloudflared Argo Tunnel
+After=network.target sing-box.service
+
+[Service]
+Type=simple
+User=root
+# 自动适配 IPv4/IPv6，不自动更新，HTTP2 协议，失败无限重试
+ExecStart=${CLOUDFLARED_PATH} tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10
+Restart=always
+RestartSec=5s
+# 将日志重定向到文件，方便抓取域名
+StandardOutput=append:${ARGO_LOG_FILE}
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable argo >/dev/null 2>&1
+    systemctl restart argo
+    
+    # 检查进程是否存活
     sleep 2
-    local cron_cmd="@reboot sleep 10 && nohup $CLOUDFLARED_PATH tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10 > $ARGO_LOG_FILE 2>&1 &"
-    (crontab -l 2>/dev/null | grep -v "cloudflared") | crontab -
-    (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
+    if systemctl is-active --quiet argo; then
+        success "Argo 服务启动成功！"
+    else
+        error "Argo 服务启动失败，请检查日志 (journalctl -u argo)。"
+        return 1
+    fi
 }
 
 wait_for_argo_connection() {
-    info "等待 Argo 连接 (30s)..."
+    info "等待 Argo 隧道连接 (最多30秒)..."
     local timeout=30
     local elapsed=0
     while [ $elapsed -lt $timeout ]; do
+        # 从日志文件中搜索
         if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
-            success "Argo 隧道建立成功！"
+            success "Argo 隧道连接成功！"
             return 0
         fi
         sleep 1
         ((elapsed++))
+        echo -ne "."
     done
-    error "Argo 连接超时，请检查日志 (cat $ARGO_LOG_FILE)。"
+    echo ""
+    error "Argo 连接超时。请运行 'cat $ARGO_LOG_FILE' 查看详情。"
     return 1
 }
 
@@ -247,7 +280,7 @@ setup_warp() {
     WARP_RESERVED="[0,0,0]"
 
     if [[ -z "$WARP_ADDRESS" || "$WARP_ADDRESS" == "null" ]]; then
-        warn "WARP 注册失败，可能网络不通。将跳过 WARP 配置。"
+        warn "WARP 注册失败。脚本将跳过 WARP 配置，仅保留直连。"
         WARP_ADDRESS=""
     fi
 }
@@ -265,13 +298,11 @@ create_config_json() {
     local HAS_WARP=false
     if [ -n "$WARP_ADDRESS" ]; then HAS_WARP=true; fi
 
-    # [优化] 根据 IP 自动选择默认 DNS (如果只有 IPv6，则默认用 IPv6 DNS)
     local DEFAULT_DNS_TAG="dns-remote"
     if [ -z "$IPV4_ADDR" ] && [ -n "$IPV6_ADDR" ]; then
         DEFAULT_DNS_TAG="dns-remote-v6"
     fi
 
-    # [关键修复] DNS 增加 Tag
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "info", "timestamp": true },
@@ -344,7 +375,6 @@ EOF
         echo '      { "inbound": "hy2-smart", "outbound": "direct" }' >> "$SINGBOX_CONFIG_FILE"
     fi
     
-    # [关键修复] 明确指定 default_domain_resolver
     cat >> "$SINGBOX_CONFIG_FILE" <<EOF
     ],
     "default_domain_resolver": "${DEFAULT_DNS_TAG}"
@@ -435,7 +465,9 @@ install_all_nodes() {
         error "Sing-box 启动失败。"; exit 1
     fi
     
-    start_argo_tunnel
+    # [修改] 使用 Systemd 启动 Argo
+    create_argo_service
+    
     if wait_for_argo_connection; then
         display_and_store_config_info
     fi
@@ -453,19 +485,45 @@ uninstall_singbox() {
     fi
 }
 
+# --- [修复] Systemd 级重启 ---
+restart_all_services() {
+    info "正在重启所有服务 (Sing-box + Argo)..."
+    
+    # 重启 Sing-box
+    systemctl restart sing-box
+    
+    # 重启 Argo
+    # 注意：重启 Argo 会导致域名变化，需要重新抓取
+    systemctl restart argo
+    
+    # 清空旧日志，等待新连接日志写入
+    echo "" > "$ARGO_LOG_FILE"
+    
+    # 检查 Sing-box
+    if ! systemctl is-active --quiet sing-box; then
+        error "Sing-box 重启失败！"
+        return 1
+    fi
+    
+    # 检查 Argo 连通性并显示新链接
+    if wait_for_argo_connection; then
+        display_and_store_config_info
+    fi
+}
+
 show_menu() {
     clear
     print_author_info
     echo "1. 安装/重置"
     echo "2. 查看节点"
-    echo "3. 重启服务"
+    echo "3. 重启服务 (含 Argo 重连)"
     echo "4. 卸载"
     echo "0. 退出"
     read -p "选择: " choice
     case "$choice" in
         1) install_all_nodes ;;
         2) display_and_store_config_info ;;
-        3) systemctl restart sing-box && success "已重启" ;;
+        3) restart_all_services ;;
         4) uninstall_singbox ;;
         0) exit 0 ;;
         *) echo "无效" ;;
