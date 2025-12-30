@@ -164,7 +164,7 @@ get_server_ip() {
 }
 
 generate_random_password() {
-    openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16
+    openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
 }
 
 install_cloudflared() {
