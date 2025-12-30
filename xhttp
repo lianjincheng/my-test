@@ -3,8 +3,8 @@
 # =========================================================
 #  Xray Vless-xhttp-reality-enc 管理脚本 (菜单版)
 #  Target Core: yonggekkk Custom Xray (with vlessenc)
-#  Feature: 双栈链接双输出 + UseIP自动路由 + DNS优化 + 强力清理
-#  Fix: 自适应监听地址 (兼容 Sysctl 禁用 IPv6 的环境)
+#  Feature: 双栈链接 + UseIP自动路由 + DNS优化 + 安全审计(ACL)
+#  Fix: 自适应监听 + 资源下载校验 + 强力清理
 # =========================================================
 
 # --- 基础配置 ---
@@ -115,7 +115,6 @@ get_ip() {
     IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
     
     # 获取 IPv6 (带备用源)
-    # 如果系统禁用了 IPv6，curl 会直接报错返回空，这是正常的，不会卡住
     IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
 
     if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
@@ -157,12 +156,23 @@ install_node() {
         warn "下载的内核似乎不支持 vlessenc，尝试强制继续..."
     fi
 
-    # --- [新增] 下载 GeoIP/GeoSite 数据库 ---
+    # --- [修正] 下载 GeoIP/GeoSite 数据库 (增加错误检查) ---
     info "下载路由规则数据库 (GeoIP/GeoSite)..."
+    
+    # 下载 GeoIP
     curl -L -o "$INSTALL_DIR/geoip.dat" "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"
-    curl -L -o "$INSTALL_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
-    # -------------------------------------
+    if [ ! -s "$INSTALL_DIR/geoip.dat" ]; then
+        error "GeoIP 数据库下载失败或文件为空！Xray 将无法启动。"
+        exit 1
+    fi
 
+    # 下载 GeoSite (dlc.dat -> geosite.dat)
+    curl -L -o "$INSTALL_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
+    if [ ! -s "$INSTALL_DIR/geosite.dat" ]; then
+        error "GeoSite 数据库下载失败或文件为空！Xray 将无法启动。"
+        exit 1
+    fi
+    # -------------------------------------
 
     info "正在生成密钥与配置..."
     
@@ -180,7 +190,7 @@ install_node() {
     PORT=$(shuf -i 10000-65535 -n 1)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    # --- [关键修改] 自适应监听地址 ---
+    # --- 自适应监听地址 ---
     # 默认监听 :: (支持 IPv6/IPv4 双栈)
     local LISTEN_ADDR="::"
     
@@ -197,7 +207,7 @@ install_node() {
     fi
     # --------------------------------
 
-    info "正在写入配置文件 (UseIP模式 + DNS优化 + 自适应监听)..."
+    info "正在写入配置文件 (UseIP + DNS优化 + ACL + 自适应监听)..."
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "none" },
@@ -258,7 +268,7 @@ install_node() {
     },
     { "protocol": "blackhole", "tag": "blocked" }
   ],
-"routing": {
+  "routing": {
     "domainStrategy": "UseIP",
     "rules": [
       { "type": "field", "ip": [ "geoip:private", "geoip:cn" ], "outboundTag": "blocked" },
@@ -268,6 +278,7 @@ install_node() {
 }
 EOF
 
+    # 验证配置文件
     if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
         error "生成的配置文件语法校验失败！"
         "$XRAY_BIN" run -test -c "$CONFIG_FILE"
