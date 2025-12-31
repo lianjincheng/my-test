@@ -98,9 +98,6 @@ install_core() {
     local VER=$("$INSTALL_DIR/hysteria" version | awk '{print $3}')
     info "内核版本: $VER"
 
-    # [新增] 下载 GeoIP 数据库 (用于 ACL 屏蔽国内IP)
-    info "下载 GeoIP 数据库 (用于安全规则)..."
-    curl -L -o "$CONFIG_DIR/geoip.dat" "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat" || warn "GeoIP 下载失败，ACL 规则可能部分失效"
 }
 
 # --- 3. 生成凭证 ---
@@ -167,13 +164,6 @@ masquerade:
     url: https://$SNI_DOMAIN
     rewriteHost: true
 
-# [安全] ACL 访问控制 (新加功能)
-# 拒绝访问私有 IP (防内网攻击)
-# 拒绝访问中国 IP (防回国流量，保护 IP 不被墙)
-acl:
-  inline:
-    - reject(geoip:private)
-    - reject(geoip:cn)
 EOF
     
     # [新增] 语法校验
