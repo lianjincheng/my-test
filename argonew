@@ -363,10 +363,6 @@ EOF
     "rules": [
       { "action": "sniff" },
       { "protocol": "dns", "action": "hijack-dns" },
-      { 
-        "ip_cidr": [ "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16" ], 
-        "action": "reject" 
-      },
       { "inbound": "vless-argo", "outbound": "direct" },
 EOF
     if [ "$HAS_WARP" = true ]; then
