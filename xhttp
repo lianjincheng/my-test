@@ -311,7 +311,7 @@ display_info() {
     
     # 构建链接部分
     local LINK_BASE="vless://${UUID}@"
-    local LINK_PARAMS=":${PORT}?encryption=${ENCRYPTION_KEY}&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
+    local LINK_PARAMS=":${PORT}?encryption=${ENCRYPTION_KEY}&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
     
     # 1. 输出 IPv4 链接 (如果有)
     if [ -n "$IPV4_ADDR" ]; then
