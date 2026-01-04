@@ -176,7 +176,7 @@ install_node() {
     # --- 写入双入站配置 ---
     cat > "$CONFIG_FILE" <<EOF
 {
-  "log": { "loglevel": "warning" },
+  "log": { "loglevel": "error" },
   "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
   "inbounds": [
     {
