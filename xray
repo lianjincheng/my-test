@@ -297,7 +297,7 @@ display_info() {
     get_ip
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 节点 1: XHTTP-Reality (强混淆/抗封锁)${NC}"
-    echo -e " Port: ${PORT_XHTTP} | Flow: 无 | Encryption: none"
+    echo -e " Port: ${PORT_XHTTP} | Flow: 无 "
     echo -e " Path: ${UUID}-xh"
     echo -e "----------------------------------------------------"
     
@@ -305,24 +305,24 @@ display_info() {
     local LINK_BASE="vless://${UUID}@"
     
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4"
+        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4${NC}"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6"
+        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6${NC}"
     fi
     echo
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 节点 2: TCP-Vision-Reality (高性能/低延迟)${NC}"
-    echo -e " Port: ${PORT_VISION} | Flow: xtls-rprx-vision | Encryption: none"
+    echo -e " Port: ${PORT_VISION} | Flow: xtls-rprx-vision "
     echo -e "----------------------------------------------------"
 
     local PARAMS_VS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
 
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4"
+        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4${NC}"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6"
+        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6${NC}"
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
