@@ -1,18 +1,19 @@
 #!/bin/bash
 
 # =========================================================
-#  Xray Vless-xhttp-reality-enc 管理脚本 (菜单版)
-#  Target Core: yonggekkk Custom Xray (with vlessenc)
-#  Feature: 双栈链接 + UseIP自动路由 + DNS优化 + 安全审计(ACL)
-#  Fix: 自适应监听 + 资源下载校验 + 强力清理
+#  Xray 双协议管理脚本 (官方纯净内核版)
+#  Target Core: XTLS/Xray-core Official (Latest)
+#  Protocol 1: VLESS + XHTTP + REALITY (强混淆/防封)
+#  Protocol 2: VLESS + TCP + VISION + REALITY (高性能/低延迟)
+#  Fix: 双端口共存 + 官方内核完美适配
 # =========================================================
 
 # --- 基础配置 ---
-INSTALL_DIR="/root/xray_enc_node"
+INSTALL_DIR="/root/xray_dual_node"
 CONFIG_FILE="${INSTALL_DIR}/config.json"
 XRAY_BIN="${INSTALL_DIR}/xray"
-SERVICE_FILE="/etc/systemd/system/xray-enc.service"
-INFO_FILE="${INSTALL_DIR}/.xray_enc_info"
+SERVICE_FILE="/etc/systemd/system/xray-dual.service"
+INFO_FILE="${INSTALL_DIR}/.xray_dual_info"
 
 # 默认伪装域名
 DEFAULT_REALITY_SNI="itunes.apple.com"
@@ -28,14 +29,12 @@ NC='\033[0m'
 
 # --- 全局变量 ---
 UUID=""
-PORT=""
+PORT_XHTTP=""   # XHTTP 协议端口
+PORT_VISION=""  # Vision 协议端口
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
-DECRYPTION_KEY=""
-ENCRYPTION_KEY=""
 REALITY_SNI=""
-# IP 变量
 IPV4_ADDR=""
 IPV6_ADDR=""
 
@@ -55,22 +54,26 @@ check_root() {
 
 # --- 强力清理旧进程 ---
 force_cleanup() {
-    # 1. 停止服务
-    if systemctl list-units --full -all | grep -q "xray-enc.service"; then
-        systemctl stop xray-enc
-        systemctl disable xray-enc >/dev/null 2>&1
-    fi
+    systemctl stop xray-dual >/dev/null 2>&1
+    systemctl disable xray-dual >/dev/null 2>&1
+    
+    # 清理可能存在的旧版服务名
+    systemctl stop xray-official >/dev/null 2>&1
+    systemctl disable xray-official >/dev/null 2>&1
+    systemctl stop xray-enc >/dev/null 2>&1
+    systemctl disable xray-enc >/dev/null 2>&1
 
-    # 2. 精确清理 Xray 进程
-    local pid=$(pgrep -f "^${XRAY_BIN}")
+    local pid=$(pgrep -f "${XRAY_BIN}")
     if [ -n "$pid" ]; then
         kill -9 $pid >/dev/null 2>&1
     fi
+    
+    rm -rf "${INSTALL_DIR}" "/root/xray_enc_node" "/root/xray_xhttp_node"
 }
 
 # --- 检查/安装依赖 ---
 check_dependencies() {
-    local deps=("curl" "wget" "tar" "jq" "openssl")
+    local deps=("curl" "wget" "tar" "jq" "openssl" "unzip")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             info "正在安装依赖: $dep ..."
@@ -87,14 +90,14 @@ check_dependencies() {
 
 # --- 保存配置信息 ---
 save_info() {
+    mkdir -p "${INSTALL_DIR}"
     cat > "$INFO_FILE" <<EOF
 UUID="${UUID}"
-PORT="${PORT}"
+PORT_XHTTP="${PORT_XHTTP}"
+PORT_VISION="${PORT_VISION}"
 PRIVATE_KEY="${PRIVATE_KEY}"
 PUBLIC_KEY="${PUBLIC_KEY}"
 SHORT_ID="${SHORT_ID}"
-DECRYPTION_KEY="${DECRYPTION_KEY}"
-ENCRYPTION_KEY="${ENCRYPTION_KEY}"
 REALITY_SNI="${REALITY_SNI}"
 EOF
 }
@@ -109,16 +112,11 @@ load_info() {
     fi
 }
 
-# --- 获取 IP (双栈独立获取) ---
+# --- 获取 IP ---
 get_ip() {
-    # 获取 IPv4 (带备用源)
     IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
-    
-    # 获取 IPv6 (带备用源)
     IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
-
     if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
-        warn "无法获取任何公网 IP！"
         IPV4_ADDR="127.0.0.1"
     fi
 }
@@ -129,83 +127,62 @@ install_node() {
     check_dependencies
     mkdir -p "$INSTALL_DIR"
     
-    info "正在检测架构并下载专用内核..."
+    info "正在检测架构并下载 Xray 官方最新内核..."
     local ARCH=$(uname -m)
-    local CPU=""
+    local DOWNLOAD_URL=""
+    
     case "$ARCH" in
-        aarch64) CPU="arm64" ;;
-        x86_64) CPU="amd64" ;;
+        aarch64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip" ;;
+        x86_64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" ;;
         *) error "不支持的架构: $ARCH"; exit 1 ;;
     esac
 
-    local DOWNLOAD_URL="https://github.com/yonggekkk/argosbx/releases/download/argosbx/xray-$CPU"
+    local ZIP_FILE="${INSTALL_DIR}/xray.zip"
+    wget -O "$ZIP_FILE" "$DOWNLOAD_URL" --tries=3
     
-    if command -v curl &>/dev/null; then
-        curl -L -o "$XRAY_BIN" "$DOWNLOAD_URL" --retry 3
-    else
-        wget -O "$XRAY_BIN" "$DOWNLOAD_URL" --tries=3
-    fi
-
-    if [ ! -f "$XRAY_BIN" ]; then
-        error "核心下载失败！请检查网络。"
+    if [ ! -f "$ZIP_FILE" ]; then
+        error "核心下载失败！"
         exit 1
     fi
+
+    unzip -o "$ZIP_FILE" -d "$INSTALL_DIR" >/dev/null 2>&1
+    rm -f "$ZIP_FILE"
     chmod +x "$XRAY_BIN"
-    
-    if ! "$XRAY_BIN" help | grep -q "vlessenc"; then
-        warn "下载的内核似乎不支持 vlessenc，尝试强制继续..."
-    fi
 
-    info "正在生成密钥与配置..."
-    
+    info "正在生成配置..."
     UUID=$("$XRAY_BIN" uuid)
-
     local KEY_PAIR=$("$XRAY_BIN" x25519)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
     SHORT_ID=$(openssl rand -hex 4)
-
-    local ENC_KEY_PAIR=$("$XRAY_BIN" vlessenc)
-    DECRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"decryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
-    ENCRYPTION_KEY=$(echo "$ENC_KEY_PAIR" | grep '"encryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
-
-    PORT=$(shuf -i 10000-65535 -n 1)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    # --- 自适应监听地址 ---
-    # 默认监听 :: (支持 IPv6/IPv4 双栈)
+    # 生成两个不重复的随机端口
+    while true; do
+        PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
+        PORT_VISION=$(shuf -i 10000-65535 -n 1)
+        if [ "$PORT_XHTTP" != "$PORT_VISION" ]; then
+            break
+        fi
+    done
+
     local LISTEN_ADDR="::"
-    
-    # 检测 1: 通过 sysctl 检测是否禁用 IPv6
     if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
         LISTEN_ADDR="0.0.0.0"
-        info "检测到 IPv6 已被 Sysctl 禁用，切换监听地址为 0.0.0.0"
-    fi
-    
-    # 检测 2: 某些精简系统可能没有 if_inet6 文件
-    if [ ! -f /proc/net/if_inet6 ]; then
+    elif [ ! -f /proc/net/if_inet6 ]; then
         LISTEN_ADDR="0.0.0.0"
-        info "检测到系统不支持 IPv6 协议栈，切换监听地址为 0.0.0.0"
     fi
-    # --------------------------------
 
-    info "正在写入配置文件 (UseIP + DNS优化 + ACL + 自适应监听)..."
+    # --- 写入双入站配置 ---
     cat > "$CONFIG_FILE" <<EOF
 {
-  "log": { "loglevel": "none" },
-
-  "dns": {
-    "servers": [
-      "1.1.1.1",
-      "8.8.8.8"
-    ]
-  },
-
+  "log": { "loglevel": "warning" },
+  "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
   "inbounds": [
     {
       "tag": "xhttp-reality",
       "listen": "${LISTEN_ADDR}",
-      "port": ${PORT},
+      "port": ${PORT_XHTTP},
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -214,20 +191,19 @@ install_node() {
             "flow": ""
           }
         ],
-        "decryption": "${DECRYPTION_KEY}"
+        "decryption": "none"
       },
       "streamSettings": {
         "network": "xhttp",
         "security": "reality",
         "realitySettings": {
           "fingerprint": "chrome",
-          "target": "${REALITY_SNI}:443",
+          "dest": "${REALITY_SNI}:443",
           "serverNames": [ "${REALITY_SNI}" ],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"]
         },
         "xhttpSettings": {
-          "host": "",
           "path": "${UUID}-xh",
           "mode": "auto"
         }
@@ -237,24 +213,48 @@ install_node() {
         "destOverride": ["http", "tls", "quic"],
         "metadataOnly": false
       }
-    }
-  ],
-
-  "outbounds": [
+    },
     {
-      "protocol": "freedom",
-      "tag": "direct",
+      "tag": "vision-reality",
+      "listen": "${LISTEN_ADDR}",
+      "port": ${PORT_VISION},
+      "protocol": "vless",
       "settings": {
-        "domainStrategy": "UseIP"
+        "clients": [
+          {
+            "id": "${UUID}",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "dest": "${REALITY_SNI}:443",
+          "serverNames": [ "${REALITY_SNI}" ],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "metadataOnly": false
       }
     }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } }
   ]
 }
 EOF
 
-    # 验证配置文件
+    # 验证
     if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
-        error "生成的配置文件语法校验失败！"
+        error "配置文件校验失败！"
         "$XRAY_BIN" run -test -c "$CONFIG_FILE"
         exit 1
     fi
@@ -262,7 +262,7 @@ EOF
     info "配置系统服务..."
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Xray Encrypted Service
+Description=Xray Dual Protocol Service
 After=network.target
 [Service]
 Type=simple
@@ -276,80 +276,67 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable xray-enc >/dev/null 2>&1
-    systemctl restart xray-enc
+    systemctl enable xray-dual >/dev/null 2>&1
+    systemctl restart xray-dual
     
     save_info
     
     sleep 2
-    if systemctl is-active --quiet xray-enc; then
-        success "安装并启动成功！"
+    if systemctl is-active --quiet xray-dual; then
+        success "安装成功！双协议节点已就绪。"
         display_info
     else
         error "服务启动失败！"
-        journalctl -u xray-enc --no-pager -n 10
+        journalctl -u xray-dual --no-pager -n 10
     fi
 }
 
-# --- 显示节点信息 (支持双栈同时显示) ---
+# --- 显示信息 ---
 display_info() {
-    if ! load_info; then
-        error "未找到配置信息，请先安装。"
-        return
-    fi
+    load_info
     get_ip
-    
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e "${GREEN} 节点类型: Vless-xhttp-reality-enc (Xray定制版)${NC}"
-    echo -e "${MAGENTA}====================================================${NC}"
-    echo -e " 端口 (Port): ${PORT}"
-    echo -e " 用户 ID (UUID): ${UUID}"
-    echo -e " 加密 Key (Encryption): ${ENCRYPTION_KEY}"
-    echo -e " 伪装域名 (SNI): ${REALITY_SNI}"
-    echo -e " 路径 (Path): ${UUID}-xh"
+    echo -e "${GREEN} 节点 1: XHTTP-Reality (强混淆/抗封锁)${NC}"
+    echo -e " Port: ${PORT_XHTTP} | Flow: 无 | Encryption: none"
+    echo -e " Path: ${UUID}-xh"
     echo -e "----------------------------------------------------"
     
-    # 构建链接部分
+    local PARAMS_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
     local LINK_BASE="vless://${UUID}@"
-    local LINK_PARAMS=":${PORT}?encryption=${ENCRYPTION_KEY}&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
     
-    # 1. 输出 IPv4 链接 (如果有)
     if [ -n "$IPV4_ADDR" ]; then
-        local LINK_V4="${LINK_BASE}${IPV4_ADDR}${LINK_PARAMS}#Xray-IPv4"
-        echo -e "${YELLOW}[IPv4] 分享链接:${NC}"
-        echo -e "${LINK_V4}"
-        echo
+        echo -e "${YELLOW}[IPv4] XHTTP:${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4"
     fi
-
-    # 2. 输出 IPv6 链接 (如果有)
     if [ -n "$IPV6_ADDR" ]; then
-        local LINK_V6="${LINK_BASE}[${IPV6_ADDR}]${LINK_PARAMS}#Xray-IPv6"
-        echo -e "${YELLOW}[IPv6] 分享链接 (需客户端网络支持IPv6):${NC}"
-        echo -e "${LINK_V6}"
-        echo
+        echo -e "${YELLOW}[IPv6] XHTTP:${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6"
     fi
+    echo
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${GREEN} 节点 2: TCP-Vision-Reality (高性能/低延迟)${NC}"
+    echo -e " Port: ${PORT_VISION} | Flow: xtls-rprx-vision | Encryption: none"
+    echo -e "----------------------------------------------------"
 
-    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
-        error "未获取到公网IP，无法生成链接。"
-        warn "如果您的 VPS 有内网 IP，请手动替换链接中的 127.0.0.1"
-        local LINK_LOCAL="${LINK_BASE}127.0.0.1${LINK_PARAMS}#Xray-Local"
-        echo -e "${LINK_LOCAL}"
+    local PARAMS_VS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
+
+    if [ -n "$IPV4_ADDR" ]; then
+        echo -e "${YELLOW}[IPv4] Vision:${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4"
+    fi
+    if [ -n "$IPV6_ADDR" ]; then
+        echo -e "${YELLOW}[IPv6] Vision:${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6"
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${CYAN}说明：所有节点均为官方内核标准配置，安全稳定。${NC}"
 }
 
 # --- 卸载 ---
 uninstall_node() {
-    read -p "确定要卸载 Xray-Enc 吗? (y/N): " choice
+    read -p "确定要卸载吗? (y/N): " choice
     if [[ "$choice" =~ ^[Yy]$ ]]; then
         force_cleanup
         rm -f "$SERVICE_FILE"
         systemctl daemon-reload
-        rm -rf "$INSTALL_DIR"
         success "卸载完成。"
-    else
-        info "已取消。"
     fi
 }
 
@@ -357,41 +344,25 @@ uninstall_node() {
 show_menu() {
     clear
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Xray-Enc 极简管理脚本 (自动适配IPv4/IPv6环境)   ${NC}"
+    echo -e "${CYAN}   Xray 双协议极简管理 (官方纯净内核)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "1. 安装 / 重置节点"
-    echo -e "2. 查看节点链接"
+    echo -e "1. 安装 / 重置 (双协议)"
+    echo -e "2. 查看链接"
     echo -e "3. 重启服务"
     echo -e "4. 卸载"
     echo -e "0. 退出"
     echo -e "------------------------------------------------"
-    
-    if systemctl is-active --quiet xray-enc; then
-        echo -e "当前状态: ${GREEN}运行中${NC}"
-    else
-        echo -e "当前状态: ${RED}未运行${NC}"
-    fi
-    echo -e "------------------------------------------------"
-    
-    read -p "请选择 [0-4]: " choice
-    case "$choice" in
+    read -p "选择: " c
+    case "$c" in
         1) install_node ;;
         2) display_info ;;
-        3) 
-           systemctl restart xray-enc
-           if systemctl is-active --quiet xray-enc; then
-               success "服务已重启"
-           else
-               error "重启失败"
-           fi
-           ;;
+        3) systemctl restart xray-dual && success "已重启" ;;
         4) uninstall_node ;;
         0) exit 0 ;;
-        *) echo "无效输入" ;;
+        *) echo "无效" ;;
     esac
-    read -p "按回车键继续..."
+    read -p "按回车继续..."
 }
 
-# --- 主逻辑 ---
 check_root
 while true; do show_menu; done
