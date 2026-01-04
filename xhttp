@@ -305,10 +305,10 @@ display_info() {
     local LINK_BASE="vless://${UUID}@"
     
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${YELLOW}[IPv4] XHTTP:${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4"
+        echo -e "${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${YELLOW}[IPv6] XHTTP:${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6"
+        echo -e "${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6"
     fi
     echo
     echo -e "${MAGENTA}====================================================${NC}"
@@ -319,10 +319,10 @@ display_info() {
     local PARAMS_VS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
 
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${YELLOW}[IPv4] Vision:${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4"
+        echo -e "${NC} ${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${YELLOW}[IPv6] Vision:${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6"
+        echo -e "${NC} ${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6"
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
