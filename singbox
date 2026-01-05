@@ -1,0 +1,557 @@
+#!/bin/bash
+
+# =========================================================
+#  Sing-Box 全能版 (Argo Systemd 守护版)
+#  Fix: 修复 UUID 丢失问题，分离保存与读取逻辑
+# =========================================================
+
+# --- Configuration ---
+SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
+SINGBOX_CONFIG_DIR="/usr/local/etc/sing-box"
+SINGBOX_CONFIG_FILE="${SINGBOX_CONFIG_DIR}/config.json"
+SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
+
+CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
+# Argo 现在的日志由 Systemd 托管，我们为了抓取域名，将其重定向到文件
+ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
+ARGO_SERVICE_FILE="/etc/systemd/system/argo.service"
+
+HYSTERIA_CERT_DIR="/etc/hysteria"
+HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
+HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
+
+PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.singbox_lite_info"
+DEFAULT_HYSTERIA_MASQUERADE_CN="cdn.jsdelivr.net"
+
+# Global Vars
+SINGBOX_CMD=""
+IPV4_ADDR=""
+IPV6_ADDR=""
+
+# Node Vars
+HY2_SMART_PORT=""
+HY2_SMART_PASSWORD=""
+HY2_OBFS_PASSWORD=""
+ARGO_PORT=""
+ARGO_UUID=""
+ARGO_PATH="/argo" 
+
+# WARP Vars
+WARP_PRIVATE_KEY=""
+WARP_PEER_PUBLIC_KEY=""
+WARP_ADDRESS=""
+WARP_RESERVED=""
+
+# --- Colors ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+print_author_info() {
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}   Sing-Box 全能版 (Systemd 守护架构)   ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+}
+
+load_persistent_info() {
+    if [ -f "$PERSISTENT_INFO_FILE" ]; then 
+        source "$PERSISTENT_INFO_FILE"
+    fi
+}
+
+save_persistent_info() {
+    # 只有当关键变量不为空时才保存，防止误覆盖
+    if [ -n "$ARGO_UUID" ] && [ -n "$HY2_SMART_PASSWORD" ]; then
+        mkdir -p "$(dirname "$PERSISTENT_INFO_FILE")"
+        cat > "$PERSISTENT_INFO_FILE" <<EOF
+HY2_SMART_PORT="${HY2_SMART_PORT}"
+HY2_SMART_PASSWORD="${HY2_SMART_PASSWORD}"
+HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
+ARGO_PORT="${ARGO_PORT}"
+ARGO_UUID="${ARGO_UUID}"
+WARP_PRIVATE_KEY="${WARP_PRIVATE_KEY}"
+WARP_PEER_PUBLIC_KEY="${WARP_PEER_PUBLIC_KEY}"
+WARP_ADDRESS="${WARP_ADDRESS}"
+WARP_RESERVED="${WARP_RESERVED}"
+EOF
+    fi
+}
+
+check_root() {
+    if [ "$(id -u)" -ne 0 ]; then error "需 root 权限运行。"; exit 1; fi
+}
+
+# --- [升级] 强力清理函数 ---
+force_cleanup() {
+    info "正在执行环境清理..."
+    
+    # 停止 Systemd 服务
+    if systemctl list-units --full -all | grep -q "sing-box.service"; then
+        systemctl stop sing-box
+        systemctl disable sing-box >/dev/null 2>&1
+    fi
+    
+    # 停止 Argo 服务
+    if systemctl list-units --full -all | grep -q "argo.service"; then
+        systemctl stop argo
+        systemctl disable argo >/dev/null 2>&1
+    fi
+
+    # 清理残留进程 (双重保险)
+    local sb_pid=$(pgrep -f "^${SINGBOX_INSTALL_PATH_EXPECTED}")
+    [ -n "$sb_pid" ] && kill -9 $sb_pid
+    
+    local cf_pid=$(pgrep -f "^${CLOUDFLARED_PATH}")
+    [ -n "$cf_pid" ] && kill -9 $cf_pid
+
+    # 清理 Crontab (旧版残留)
+    if crontab -l >/dev/null 2>&1; then
+        (crontab -l 2>/dev/null | grep -v "cloudflared" | grep -v "sing-box") | crontab -
+    fi
+
+    # 清理日志和旧服务文件
+    rm -f "$ARGO_LOG_FILE"
+    rm -f "$ARGO_SERVICE_FILE"
+    
+    sleep 1
+    success "环境清理完成。"
+}
+
+check_dependencies() {
+    local deps=("curl" "openssl" "jq" "lsof" "cron" "wireguard-tools")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            info "安装依赖: $dep ..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -y && apt-get install -y "$dep"
+            elif command -v yum &>/dev/null; then
+                yum install -y "$dep"
+            fi
+        fi
+    done
+}
+
+find_and_set_singbox_cmd() {
+    if [ -x "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then
+        SINGBOX_CMD="$SINGBOX_INSTALL_PATH_EXPECTED"
+    else
+        SINGBOX_CMD=""
+    fi
+}
+
+get_server_ip() {
+    IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k 2>/dev/null)
+    IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k 2>/dev/null)
+
+    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
+        local ANY_IP=$(curl -sm5 https://icanhazip.com -k 2>/dev/null)
+        if [[ "$ANY_IP" == *":"* ]]; then
+            IPV6_ADDR="$ANY_IP"
+        elif [ -n "$ANY_IP" ]; then
+            IPV4_ADDR="$ANY_IP"
+        else
+            error "无法获取任何公网 IP，请检查网络。"
+            exit 1
+        fi
+    fi
+}
+
+generate_random_password() {
+    openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32
+}
+
+install_cloudflared() {
+    if [ -f "$CLOUDFLARED_PATH" ]; then return 0; fi
+    info "安装 Cloudflared..."
+    local ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        *) error "架构不支持: $ARCH"; exit 1 ;;
+    esac
+    
+    local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
+    curl -L -o "$CLOUDFLARED_PATH" "$URL" || wget -O "$CLOUDFLARED_PATH" "$URL"
+    
+    if [ ! -f "$CLOUDFLARED_PATH" ]; then error "Cloudflared 下载失败"; exit 1; fi
+    chmod +x "$CLOUDFLARED_PATH"
+}
+
+# --- [升级] Argo 系统服务化 ---
+create_argo_service() {
+    info "配置 Argo 系统服务..."
+    
+    # 清空日志文件，准备接收新日志
+    echo "" > "$ARGO_LOG_FILE"
+    chmod 666 "$ARGO_LOG_FILE"
+
+    cat > "$ARGO_SERVICE_FILE" <<EOF
+[Unit]
+Description=Cloudflared Argo Tunnel
+After=network.target sing-box.service
+
+[Service]
+Type=simple
+User=root
+# 自动适配 IPv4/IPv6，不自动更新，HTTP2 协议，失败无限重试
+ExecStart=${CLOUDFLARED_PATH} tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10
+Restart=always
+RestartSec=5s
+# 将日志重定向到文件，方便抓取域名
+StandardOutput=append:${ARGO_LOG_FILE}
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable argo >/dev/null 2>&1
+    systemctl restart argo
+    
+    # 检查进程是否存活
+    sleep 2
+    if systemctl is-active --quiet argo; then
+        success "Argo 服务启动成功！"
+    else
+        error "Argo 服务启动失败，请检查日志 (journalctl -u argo)。"
+        return 1
+    fi
+}
+
+wait_for_argo_connection() {
+    info "等待 Argo 隧道连接 (最多30秒)..."
+    local timeout=30
+    local elapsed=0
+    while [ $elapsed -lt $timeout ]; do
+        # 从日志文件中搜索
+        if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
+            success "Argo 隧道连接成功！"
+            return 0
+        fi
+        sleep 1
+        ((elapsed++))
+        echo -ne "."
+    done
+    echo ""
+    error "Argo 连接超时。请运行 'cat $ARGO_LOG_FILE' 查看详情。"
+    return 1
+}
+
+install_singbox_core() {
+    if [ -f "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then find_and_set_singbox_cmd; return 0; fi
+    info "安装 Sing-box..."
+    local latest_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+    [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ] && latest_tag="v1.11.1"
+    
+    local ARCH
+    case "$(uname -m)" in
+        x86_64) ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        *) error "架构不支持"; exit 1 ;;
+    esac
+    
+    local ver=${latest_tag#v}
+    local url="https://github.com/SagerNet/sing-box/releases/download/${latest_tag}/sing-box-${ver}-linux-${ARCH}.tar.gz"
+    local tmp_dir=$(mktemp -d)
+    curl -L -o "${tmp_dir}/sing-box.tar.gz" "$url" || { error "Sing-box 下载失败"; exit 1; }
+    
+    tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"
+    install -m 755 "${tmp_dir}/sing-box-${ver}-linux-${ARCH}/sing-box" "$SINGBOX_INSTALL_PATH_EXPECTED"
+    rm -rf "$tmp_dir"
+    find_and_set_singbox_cmd
+}
+
+setup_warp() {
+    if [ -n "$WARP_PRIVATE_KEY" ]; then return 0; fi
+    info "配置 WARP 账户..."
+    
+    local PRIV=$(wg genkey)
+    local PUB=$(echo "$PRIV" | wg pubkey)
+    local RESP=$(curl -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
+    
+    WARP_PRIVATE_KEY="$PRIV"
+    WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
+    WARP_ADDRESS=$(echo "$RESP" | jq -r '.config.interface.addresses.v4' | sed 's/\/.*//g')
+    WARP_RESERVED="[0,0,0]"
+
+    if [[ -z "$WARP_ADDRESS" || "$WARP_ADDRESS" == "null" ]]; then
+        warn "WARP 注册失败。脚本将跳过 WARP 配置，仅保留直连。"
+        WARP_ADDRESS=""
+    fi
+}
+
+generate_self_signed_cert() {
+    if [ -f "$HYSTERIA_CERT_PEM" ]; then return 0; fi
+    mkdir -p "$HYSTERIA_CERT_DIR"
+    openssl req -new -x509 -days 36500 -nodes -subj "/CN=$DEFAULT_HYSTERIA_MASQUERADE_CN" -keyout "$HYSTERIA_CERT_KEY" -out "$HYSTERIA_CERT_PEM"
+}
+
+create_config_json() {
+    find_and_set_singbox_cmd
+    mkdir -p "$SINGBOX_CONFIG_DIR"
+
+    local HAS_WARP=false
+    if [ -n "$WARP_ADDRESS" ]; then HAS_WARP=true; fi
+
+    local DEFAULT_DNS_TAG="dns-remote"
+    if [ -z "$IPV4_ADDR" ] && [ -n "$IPV6_ADDR" ]; then
+        DEFAULT_DNS_TAG="dns-remote-v6"
+    fi
+
+    cat > "$SINGBOX_CONFIG_FILE" <<EOF
+{
+  "log": { "level": "info", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "tag": "dns-remote", "type": "udp", "server": "1.1.1.1" },
+      { "tag": "dns-remote-v6","type": "udp", "server": "2606:4700:4700::1111" }
+    ]
+  },
+EOF
+
+    if [ "$HAS_WARP" = true ]; then
+        cat >> "$SINGBOX_CONFIG_FILE" <<EOF
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "warp-out","mtu": 1280,
+      "address": [ "${WARP_ADDRESS}/32" ],
+      "private_key": "${WARP_PRIVATE_KEY}",
+      "peers": [
+        {
+          "address": "engage.cloudflareclient.com",
+          "port": 2408,
+          "public_key": "${WARP_PEER_PUBLIC_KEY}",
+          "allowed_ips": ["0.0.0.0/0"],"persistent_keepalive_interval": 25,
+          "reserved": ${WARP_RESERVED}
+        }
+      ]
+    }
+  ],
+EOF
+    fi
+
+    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-smart",
+      "listen": "::",
+      "listen_port": ${HY2_SMART_PORT},
+      "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
+      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
+      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
+    },
+    {
+      "type": "vless",
+      "tag": "vless-argo",
+      "listen": "127.0.0.1",
+      "listen_port": ${ARGO_PORT},
+      "users": [ { "uuid": "${ARGO_UUID}" } ],
+      "transport": { "type": "ws", "path": "${ARGO_PATH}","max_early_data": 2048,"early_data_header_name": "Sec-WebSocket-Protocol" }
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "inbound": "vless-argo", "outbound": "direct" },
+EOF
+    if [ "$HAS_WARP" = true ]; then
+        echo '      { "inbound": "hy2-smart", "outbound": "warp-out" }' >> "$SINGBOX_CONFIG_FILE"
+    else
+        echo '      { "inbound": "hy2-smart", "outbound": "direct" }' >> "$SINGBOX_CONFIG_FILE"
+    fi
+    
+    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
+    ],
+    "default_domain_resolver": "${DEFAULT_DNS_TAG}"
+  }
+}
+EOF
+}
+
+create_systemd_service() {
+    cat > "$SINGBOX_SERVICE_FILE" <<EOF
+[Unit]
+Description=Sing-Box Service
+After=network.target
+[Service]
+User=root
+WorkingDirectory=${SINGBOX_CONFIG_DIR}
+ExecStart=${SINGBOX_CMD} run -c ${SINGBOX_CONFIG_FILE}
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable sing-box
+}
+
+display_and_store_config_info() {
+    # 修复：在显示前强制加载一次配置，确保从菜单进入时变量存在
+    load_persistent_info
+
+    echo -e "${MAGENTA}====================================================${NC}"
+    local WARP_STATUS=""
+    [ -n "$WARP_ADDRESS" ] && WARP_STATUS="(WARP出站)" || WARP_STATUS="(直连)"
+
+    echo -e "${GREEN} 1. [智能] Hysteria2 ${WARP_STATUS}${NC}"
+    local HY2_BASE="hy2://${HY2_SMART_PASSWORD}@"
+    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}"
+    
+    if [ -n "$IPV4_ADDR" ]; then
+        echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-IPv4"
+    fi
+    if [ -n "$IPV6_ADDR" ]; then
+        echo -e "${YELLOW}   [IPv6]:${NC} ${HY2_BASE}[${IPV6_ADDR}]${HY2_PARAMS}#Hy2-IPv6"
+    fi
+    
+    echo
+    echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
+    local ARGO_DOMAIN=""
+    # 尝试从日志抓取临时域名
+    if [ -f "$ARGO_LOG_FILE" ]; then
+        ARGO_DOMAIN=$(grep -a "trycloudflare.com" "$ARGO_LOG_FILE" | tail -n 10 | grep -o 'https://.*trycloudflare.com' | sed 's/https:\/\///' | head -n 1)
+    fi
+    
+    if [ -n "$ARGO_DOMAIN" ]; then
+        success "域名抓取成功: ${ARGO_DOMAIN}"
+        echo
+        
+        # --- 修改开始：固定优选域名与指定端口组 ---
+        local CF_FIXED_DOMAIN="saas.sin.fan"
+        local CF_PORTS=(443 2053 2083 2087 2096 8443)
+
+        # 遍历端口数组生成链接
+        for port in "${CF_PORTS[@]}"; do
+            # 生成 VLESS 链接
+            # 注意：地址(address)是优选域名，SNI和Host是Argo的临时域名
+            local argo_link="vless://${ARGO_UUID}@${CF_FIXED_DOMAIN}:${port}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-${port}"
+            
+            echo -e "${GREEN}${argo_link}${NC}"
+            echo
+        done
+        # --- 修改结束 ---
+        
+    else
+        error "Argo 域名获取失败，请检查日志。"
+    fi
+    
+    # 注意：不再此处调用 save_persistent_info，因为它在 install 阶段已保存，这里只负责显示
+}
+
+install_all_nodes() {
+    force_cleanup
+    check_dependencies
+    install_singbox_core
+    install_cloudflared
+    get_server_ip
+    setup_warp
+
+    HY2_SMART_PORT=$(shuf -i 10000-65535 -n 1)
+    ARGO_PORT=$(shuf -i 10000-65535 -n 1)
+    HY2_SMART_PASSWORD=$(generate_random_password)
+    HY2_OBFS_PASSWORD=$(generate_random_password)
+    ARGO_UUID=$($SINGBOX_CMD generate uuid) 
+    generate_self_signed_cert
+    
+    # 修复：生成变量后立即保存，防止丢失
+    save_persistent_info
+
+    create_config_json
+    if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
+        error "配置生成有误。"; exit 1
+    fi
+
+    create_systemd_service
+    systemctl restart sing-box
+    sleep 2
+    if ! systemctl is-active --quiet sing-box; then
+        error "Sing-box 启动失败。"; exit 1
+    fi
+    
+    # [修改] 使用 Systemd 启动 Argo
+    create_argo_service
+    
+    if wait_for_argo_connection; then
+        display_and_store_config_info
+    fi
+}
+
+uninstall_singbox() {
+    read -p "确定卸载? (y/N): " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        force_cleanup
+        rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_CMD"
+        rm -rf "$SINGBOX_CONFIG_DIR"
+        rm -rf "$HYSTERIA_CERT_DIR"
+        rm -f "$CLOUDFLARED_PATH"
+        success "已卸载。"
+    fi
+}
+
+# --- [修复] Systemd 级重启 ---
+restart_all_services() {
+    info "正在重启所有服务 (Sing-box + Argo)..."
+    
+    # 修复：重启时也需要加载变量，否则无法生成链接
+    load_persistent_info
+    
+    # 重启 Sing-box
+    systemctl restart sing-box
+    
+    # 重启 Argo
+    # 注意：重启 Argo 会导致域名变化，需要重新抓取
+    systemctl restart argo
+    
+    # 清空旧日志，等待新连接日志写入
+    echo "" > "$ARGO_LOG_FILE"
+    
+    # 检查 Sing-box
+    if ! systemctl is-active --quiet sing-box; then
+        error "Sing-box 重启失败！"
+        return 1
+    fi
+    
+    # 检查 Argo 连通性并显示新链接
+    if wait_for_argo_connection; then
+        display_and_store_config_info
+    fi
+}
+
+show_menu() {
+    clear
+    print_author_info
+    echo "1. 安装/重置"
+    echo "2. 查看节点"
+    echo "3. 重启服务 (含 Argo 重连)"
+    echo "4. 卸载"
+    echo "0. 退出"
+    read -p "选择: " choice
+    case "$choice" in
+        1) install_all_nodes ;;
+        2) display_and_store_config_info ;;
+        3) restart_all_services ;;
+        4) uninstall_singbox ;;
+        0) exit 0 ;;
+        *) echo "无效" ;;
+    esac
+    read -p "按回车继续..."
+}
+
+check_root
+while true; do show_menu; done
