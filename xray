@@ -201,7 +201,7 @@ install_node() {
           "dest": "${REALITY_SNI}:443",
           "serverNames": [ "${REALITY_SNI}" ],
           "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"]
+          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
         },
         "xhttpSettings": {
           "path": "${UUID}-xh",
