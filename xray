@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-#  Xray 双协议管理脚本 (官方纯净内核版)
+#  Xray 双协议管理脚本 (官方纯净内核 + 443端口保护版)
 #  Target Core: XTLS/Xray-core Official (Latest)
 #  Protocol 1: VLESS + XHTTP + REALITY (强混淆/防封)
 #  Protocol 2: VLESS + TCP + VISION + REALITY (高性能/低延迟)
-#  Fix: 双端口共存 + 官方内核完美适配
+#  Fix: 双端口共存 + 443端口占用检测 + 官方内核适配
 # =========================================================
 
 # --- 基础配置 ---
@@ -30,7 +30,7 @@ NC='\033[0m'
 # --- 全局变量 ---
 UUID=""
 PORT_XHTTP=""   # XHTTP 协议端口
-PORT_VISION="443"  # Vision 协议端口
+PORT_VISION="443"  # Vision 协议端口 (固定)
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
@@ -54,10 +54,11 @@ check_root() {
 
 # --- 强力清理旧进程 ---
 force_cleanup() {
+    # 先停止当前服务，释放端口
     systemctl stop xray-dual >/dev/null 2>&1
     systemctl disable xray-dual >/dev/null 2>&1
     
-    # 清理可能存在的旧版服务名
+    # 清理旧服务
     systemctl stop xray-official >/dev/null 2>&1
     systemctl disable xray-official >/dev/null 2>&1
     systemctl stop xray-enc >/dev/null 2>&1
@@ -73,7 +74,8 @@ force_cleanup() {
 
 # --- 检查/安装依赖 ---
 check_dependencies() {
-    local deps=("curl" "wget" "tar" "jq" "openssl" "unzip")
+    # 新增 net-tools 依赖，确保 netstat 命令可用
+    local deps=("curl" "wget" "tar" "jq" "openssl" "unzip" "net-tools")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             info "正在安装依赖: $dep ..."
@@ -86,6 +88,26 @@ check_dependencies() {
             fi
         fi
     done
+}
+
+# --- [新增] 443 端口占用检测 ---
+check_port_443() {
+    info "正在检测 443 端口环境..."
+    
+    # 使用 netstat 检测 :443 端口
+    # 之前已经执行过 force_cleanup，此时 443 应该为空
+    # 如果此时检测到占用，说明是 Nginx/Apache 等其他软件占用的
+    if netstat -tlunp | grep -w ":443" > /dev/null 2>&1; then
+        error "严重错误：检测到 443 端口正在被其他程序占用！"
+        echo -e "${YELLOW}↓↓↓ 占用详情 (netstat) ↓↓↓${NC}"
+        netstat -tlunp | grep -w ":443"
+        echo -e "${YELLOW}↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑${NC}"
+        echo -e "${RED}Xray 无法启动。请先停止或卸载占用 443 端口的软件 (如 Nginx/Apache/Caddy/Docker) 后重试。${NC}"
+        echo -e "${RED}脚本已停止运行。${NC}"
+        exit 1
+    else
+        info "端口检测通过：443 端口空闲，可以继续安装。"
+    fi
 }
 
 # --- 保存配置信息 ---
@@ -123,8 +145,10 @@ get_ip() {
 
 # --- 安装核心逻辑 ---
 install_node() {
-    force_cleanup
-    check_dependencies
+    force_cleanup      # 1. 先清理旧进程 (释放端口)
+    check_dependencies # 2. 安装依赖 (含 netstat)
+    check_port_443     # 3. 检查端口 (如果有残留占用则报错退出)
+    
     mkdir -p "$INSTALL_DIR"
     
     info "正在检测架构并下载 Xray 官方最新内核..."
@@ -285,7 +309,7 @@ EOF
         success "安装成功！双协议节点已就绪。"
         display_info
     else
-        error "服务启动失败！"
+        error "服务启动失败！可能是 443 端口被其他非系统进程占用。"
         journalctl -u xray-dual --no-pager -n 10
     fi
 }
@@ -346,7 +370,7 @@ show_menu() {
     echo -e "${CYAN}   Xray 双协议极简管理 (官方纯净内核)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
     echo -e "1. 安装 / 重置 (双协议)"
-    echo -e "2. 查看链接"
+    echo -e "2. 查看节点链接"
     echo -e "3. 重启服务"
     echo -e "4. 卸载"
     echo -e "0. 退出"
