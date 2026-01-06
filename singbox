@@ -421,7 +421,7 @@ display_and_store_config_info() {
     fi
     
     echo
-    echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
+   echo -e "${CYAN}================== Argo 临时隧道 ==================${NC}"
     local ARGO_DOMAIN=""
     # 尝试从日志抓取临时域名
     if [ -f "$ARGO_LOG_FILE" ]; then
@@ -432,16 +432,17 @@ display_and_store_config_info() {
         success "域名抓取成功: ${ARGO_DOMAIN}"
         echo
         
-        # --- 修改开始：固定优选域名与指定端口组 ---
-        local CF_FIXED_DOMAIN="saas.sin.fan"
-        local CF_PORTS=(443 2053 2083 2087 2096 8443)
+        # --- 修改开始：固定端口为443，遍历指定优选IP ---
+        local FIXED_PORT=443
+        local CF_IPS=("144.34.230.37" "144.34.236.99" "144.34.234.96" "144.34.228.107")
 
-        # 遍历端口数组生成链接
-        for port in "${CF_PORTS[@]}"; do
+        # 遍历 IP 数组生成链接
+        for current_ip in "${CF_IPS[@]}"; do
             # 生成 VLESS 链接
-            # 注意：地址(address)是优选域名，SNI和Host是Argo的临时域名
-            local argo_link="vless://${ARGO_UUID}@${CF_FIXED_DOMAIN}:${port}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-${port}"
+            # 注意：地址(address)是优选IP，端口固定443，SNI和Host必须是Argo的临时域名
+            local argo_link="vless://${ARGO_UUID}@${current_ip}:${FIXED_PORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-${current_ip}"
             
+            echo -e "${GREEN} [Argo] 优选节点 (${current_ip})${NC}"
             echo -e "${GREEN}${argo_link}${NC}"
             echo
         done
