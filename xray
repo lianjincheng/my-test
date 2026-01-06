@@ -30,7 +30,7 @@ NC='\033[0m'
 # --- 全局变量 ---
 UUID=""
 PORT_XHTTP=""   # XHTTP 协议端口
-PORT_VISION=""  # Vision 协议端口
+PORT_VISION="443"  # Vision 协议端口
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
@@ -160,7 +160,6 @@ install_node() {
     # 生成两个不重复的随机端口
     while true; do
         PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
-        PORT_VISION=$(shuf -i 10000-65535 -n 1)
         if [ "$PORT_XHTTP" != "$PORT_VISION" ]; then
             break
         fi
