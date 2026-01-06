@@ -1,0 +1,333 @@
+#!/bin/bash
+
+# =========================================================
+#  Xray 单协议管理脚本 (官方纯净内核 + XHTTP专用版)
+#  Target Core: XTLS/Xray-core Official (Latest)
+#  Protocol: VLESS + XHTTP + REALITY (443端口)
+#  Features: 
+#    1. 极致抗封锁/防QoS (XHTTP协议)
+#    2. 运营商白名单端口 (443)
+#    3. 官方内核纯净无污染
+#    4. SpiderX 爬虫回落防御
+# =========================================================
+
+# --- 基础配置 ---
+INSTALL_DIR="/root/xray_xhttp_node"
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+XRAY_BIN="${INSTALL_DIR}/xray"
+SERVICE_FILE="/etc/systemd/system/xray-xhttp.service"
+INFO_FILE="${INSTALL_DIR}/.xray_xhttp_info"
+
+# 默认伪装域名
+DEFAULT_REALITY_SNI="itunes.apple.com"
+
+# --- 颜色定义 ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# --- 全局变量 ---
+UUID=""
+PORT_XHTTP="443"   # 固定 XHTTP 为 443 端口
+PRIVATE_KEY=""
+PUBLIC_KEY=""
+SHORT_ID=""
+REALITY_SNI=""
+IPV4_ADDR=""
+IPV6_ADDR=""
+
+# --- 辅助函数 ---
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+# --- 检查 Root ---
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "必须使用 root 权限运行此脚本。"
+        exit 1
+    fi
+}
+
+# --- 强力清理旧进程 ---
+force_cleanup() {
+    # 停止各种旧服务名
+    systemctl stop xray-xhttp >/dev/null 2>&1
+    systemctl disable xray-xhttp >/dev/null 2>&1
+    systemctl stop xray-dual >/dev/null 2>&1
+    systemctl disable xray-dual >/dev/null 2>&1
+    systemctl stop xray-official >/dev/null 2>&1
+    systemctl disable xray-official >/dev/null 2>&1
+
+    local pid=$(pgrep -f "${XRAY_BIN}")
+    if [ -n "$pid" ]; then
+        kill -9 $pid >/dev/null 2>&1
+    fi
+    
+    # 清理所有相关目录
+    rm -rf "${INSTALL_DIR}" "/root/xray_dual_node" "/root/xray_enc_node"
+}
+
+# --- 检查/安装依赖 ---
+check_dependencies() {
+    local deps=("curl" "wget" "tar" "jq" "openssl" "unzip" "net-tools")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            info "正在安装依赖: $dep ..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -y && apt-get install -y "$dep"
+            elif command -v yum &>/dev/null; then
+                yum install -y "$dep"
+            else
+                warn "无法自动安装 $dep，请手动安装。"
+            fi
+        fi
+    done
+}
+
+# --- 443 端口占用检测 ---
+check_port_443() {
+    info "正在检测 443 端口环境..."
+    if netstat -tlunp | grep -w ":443" > /dev/null 2>&1; then
+        error "严重错误：检测到 443 端口正在被其他程序占用！"
+        echo -e "${YELLOW}↓↓↓ 占用详情 (netstat) ↓↓↓${NC}"
+        netstat -tlunp | grep -w ":443"
+        echo -e "${YELLOW}↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑${NC}"
+        echo -e "${RED}Xray 无法启动。请先停止或卸载占用 443 端口的软件 (如 Nginx/Apache/Caddy/Docker) 后重试。${NC}"
+        echo -e "${RED}脚本已停止运行。${NC}"
+        exit 1
+    else
+        info "端口检测通过：443 端口空闲，可以继续安装。"
+    fi
+}
+
+# --- 保存配置信息 ---
+save_info() {
+    mkdir -p "${INSTALL_DIR}"
+    cat > "$INFO_FILE" <<EOF
+UUID="${UUID}"
+PORT_XHTTP="${PORT_XHTTP}"
+PRIVATE_KEY="${PRIVATE_KEY}"
+PUBLIC_KEY="${PUBLIC_KEY}"
+SHORT_ID="${SHORT_ID}"
+REALITY_SNI="${REALITY_SNI}"
+EOF
+}
+
+# --- 加载配置信息 ---
+load_info() {
+    if [ -f "$INFO_FILE" ]; then
+        source "$INFO_FILE"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# --- 获取 IP ---
+get_ip() {
+    IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
+    IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
+    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
+        IPV4_ADDR="127.0.0.1"
+    fi
+}
+
+# --- 安装核心逻辑 ---
+install_node() {
+    force_cleanup
+    check_dependencies
+    check_port_443
+    
+    mkdir -p "$INSTALL_DIR"
+    
+    info "正在检测架构并下载 Xray 官方最新内核..."
+    local ARCH=$(uname -m)
+    local DOWNLOAD_URL=""
+    
+    case "$ARCH" in
+        aarch64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip" ;;
+        x86_64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" ;;
+        *) error "不支持的架构: $ARCH"; exit 1 ;;
+    esac
+
+    local ZIP_FILE="${INSTALL_DIR}/xray.zip"
+    wget -O "$ZIP_FILE" "$DOWNLOAD_URL" --tries=3
+    
+    if [ ! -f "$ZIP_FILE" ]; then
+        error "核心下载失败！"
+        exit 1
+    fi
+
+    unzip -o "$ZIP_FILE" -d "$INSTALL_DIR" >/dev/null 2>&1
+    rm -f "$ZIP_FILE"
+    chmod +x "$XRAY_BIN"
+
+    info "正在生成配置..."
+    UUID=$("$XRAY_BIN" uuid)
+    local KEY_PAIR=$("$XRAY_BIN" x25519)
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
+    SHORT_ID=$(openssl rand -hex 4)
+    REALITY_SNI="$DEFAULT_REALITY_SNI"
+
+    local LISTEN_ADDR="::"
+    if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
+        LISTEN_ADDR="0.0.0.0"
+    elif [ ! -f /proc/net/if_inet6 ]; then
+        LISTEN_ADDR="0.0.0.0"
+    fi
+
+    # --- 写入单入站配置 (XHTTP Only) ---
+    cat > "$CONFIG_FILE" <<EOF
+{
+  "log": { "loglevel": "error" },
+  "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
+  "inbounds": [
+    {
+      "tag": "xhttp-reality",
+      "listen": "${LISTEN_ADDR}",
+      "port": ${PORT_XHTTP},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${UUID}",
+            "flow": ""
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "dest": "${REALITY_SNI}:443",
+          "serverNames": [ "${REALITY_SNI}" ],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
+        },
+        "xhttpSettings": {
+          "path": "${UUID}-xh",
+          "mode": "auto"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "metadataOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } }
+  ]
+}
+EOF
+
+    # 验证
+    if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
+        error "配置文件校验失败！"
+        "$XRAY_BIN" run -test -c "$CONFIG_FILE"
+        exit 1
+    fi
+
+    info "配置系统服务..."
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Xray XHTTP Service
+After=network.target
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${XRAY_BIN} run -c ${CONFIG_FILE}
+Restart=on-failure
+RestartSec=5s
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xray-xhttp >/dev/null 2>&1
+    systemctl restart xray-xhttp
+    
+    save_info
+    
+    sleep 2
+    if systemctl is-active --quiet xray-xhttp; then
+        success "安装成功！XHTTP 单节点 (443端口) 已就绪。"
+        display_info
+    else
+        error "服务启动失败！可能是 443 端口被其他进程占用。"
+        journalctl -u xray-xhttp --no-pager -n 10
+    fi
+}
+
+# --- 显示信息 ---
+display_info() {
+    load_info
+    get_ip
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${GREEN} 节点类型: XHTTP-Reality (443端口/官方内核)${NC}"
+    echo -e " Port: ${PORT_XHTTP} | Flow: 无 | Encryption: none"
+    echo -e " Path: ${UUID}-xh"
+    echo -e "----------------------------------------------------"
+    
+    local PARAMS_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
+    local LINK_BASE="vless://${UUID}@"
+    
+    if [ -n "$IPV4_ADDR" ]; then
+        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4${NC}"
+    fi
+    if [ -n "$IPV6_ADDR" ]; then
+        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6${NC}"
+    fi
+
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${CYAN}说明：节点已启用 SpiderX 优化，且运行在运营商白名单 443 端口。${NC}"
+}
+
+# --- 卸载 ---
+uninstall_node() {
+    read -p "确定要卸载吗? (y/N): " choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        force_cleanup
+        rm -f "$SERVICE_FILE"
+        systemctl daemon-reload
+        success "卸载完成。"
+    fi
+}
+
+# --- 菜单 ---
+show_menu() {
+    clear
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}   Xray 单协议管理 (XHTTP + 443 + 官方内核)   ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "1. 安装 / 重置"
+    echo -e "2. 查看节点链接"
+    echo -e "3. 重启服务"
+    echo -e "4. 卸载"
+    echo -e "0. 退出"
+    echo -e "------------------------------------------------"
+    read -p "选择: " c
+    case "$c" in
+        1) install_node ;;
+        2) display_info ;;
+        3) systemctl restart xray-xhttp && success "已重启" ;;
+        4) uninstall_node ;;
+        0) exit 0 ;;
+        *) echo "无效" ;;
+    esac
+    read -p "按回车继续..."
+}
+
+check_root
+while true; do show_menu; done
