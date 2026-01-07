@@ -434,7 +434,7 @@ display_and_store_config_info() {
         
         # --- 修改开始：固定端口为443，遍历指定优选IP ---
         local FIXED_PORT=443
-        local CF_IPS=("144.34.230.37" "144.34.236.99" "144.34.234.96" "144.34.228.107")
+        local CF_IPS=("144.34.230.37" "144.34.234.96" "144.34.228.107")
 
         # 遍历 IP 数组生成链接
         for current_ip in "${CF_IPS[@]}"; do
