@@ -1,0 +1,229 @@
+#!/bin/bash
+
+# =========================================================
+#  Hysteria2 端口跳跃管理脚本 (100% 安全扫描版)
+#  Fix: 升级端口检测逻辑，遍历检查范围内的每一个端口
+# =========================================================
+
+# --- 颜色定义 ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+UFW_RULES_FILE="/etc/ufw/before.rules"
+BACKUP_DIR="/root/ufw_backup"
+
+# --- 辅助函数 ---
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# --- 检查 Root 权限 ---
+check_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        error "请使用 sudo 或 root 权限运行此脚本"
+        exit 1
+    fi
+}
+
+# --- 检查 UFW ---
+check_ufw() {
+    if ! command -v ufw &> /dev/null; then
+        error "系统未检测到 UFW 防火墙！请先安装: apt update && apt install ufw"
+        exit 1
+    fi
+    
+    if ! ufw status | grep -q "Status: active"; then
+        warn "检测到 UFW 已安装但未开启。"
+        read -p "是否现在开启 UFW? (y/n): " enable_ufw
+        if [[ "$enable_ufw" =~ ^[Yy]$ ]]; then
+            ufw enable
+        else
+            error "脚本终止，端口跳跃需要防火墙处于 Active 状态。"
+            exit 1
+        fi
+    fi
+}
+
+# --- [升级] 生成 100% 安全的随机空闲端口范围 ---
+get_random_range() {
+    local start_port
+    info "正在智能扫描未被占用的连续 50 个端口..."
+    
+    # 预先获取一次所有正在监听的端口列表，提高效率
+    local busy_ports=$(netstat -tunlp | awk '{print $4}' | grep -oE '[0-9]+$')
+
+    while true; do
+        start_port=$(shuf -i 20000-60000 -n 1)
+        local end_port=$((start_port + 49)) # 50个端口
+        local is_clean=true
+        
+        # 循环检查范围内的每一个端口
+        for (( port=start_port; port<=end_port; port++ )); do
+            # 使用 grep -q -w 来精确匹配端口号
+            if echo "$busy_ports" | grep -q -w "$port"; then
+                is_clean=false
+                # 发现占用，立即跳出内层循环，此范围作废
+                break
+            fi
+        done
+        
+        # 如果整个循环跑完 is_clean 还是 true，说明范围是干净的
+        if $is_clean; then
+            echo "$start_port"
+            # 跳出外层循环，返回结果
+            break
+        fi
+        # 否则继续下一次随机尝试
+    done
+}
+
+# --- [核心] 外科手术式清理旧规则 ---
+surgical_cleanup() {
+    info "正在执行精准规则清理 (保护 Docker 映射)..."
+    if grep -q "HY2-PORT-HOPPING-START" $UFW_RULES_FILE; then
+        local old_range=$(grep -A 5 "HY2-PORT-HOPPING-START" $UFW_RULES_FILE | grep "\-\-dport" | grep -oE "[0-9]+:[0-9]+" | head -n 1)
+        local old_target=$(grep -A 5 "HY2-PORT-HOPPING-START" $UFW_RULES_FILE | grep "\-\-to-ports" | awk '{print $NF}' | head -n 1)
+
+        if [[ -n "$old_range" && -n "$old_target" ]]; then
+            info "发现旧规则: 范围 $old_range -> 目标 $old_target"
+            while iptables -t nat -D PREROUTING -p udp --dport "$old_range" -j REDIRECT --to-ports "$old_target" 2>/dev/null; do
+                success "已从内存中移除一条旧 NAT 规则。"
+            done
+            ufw delete allow "${old_range}/udp" >/dev/null 2>&1
+        fi
+        sed -i '/# --- HY2-PORT-HOPPING-START ---/,/# --- HY2-PORT-HOPPING-END ---/d' $UFW_RULES_FILE
+    fi
+}
+
+# --- 功能 1: 添加端口跳跃 ---
+add_hopping() {
+    check_ufw
+    
+    echo -e "${CYAN}--- 配置 Hysteria2 端口跳跃 (100% 安全扫描) ---${NC}"
+    
+    while true; do
+        read -p "请输入当前 Hysteria2 节点的监听端口 (必填): " hy2_port
+        if [[ -n "$hy2_port" && "$hy2_port" =~ ^[0-9]+$ ]] && [ "$hy2_port" -le 65535 ]; then
+            break
+        else
+            error "请输入有效的端口号 (1-65535)！"
+        fi
+    done
+
+    local default_start=$(get_random_range)
+    local default_end=$((default_start + 49))
+    local default_range_str="${default_start}:${default_end}"
+
+    echo -e "请输入跳跃端口范围 (格式: 起始:结束，建议 50 个端口)"
+    echo -e "已为你智能扫描出一个可用范围: ${GREEN}${default_range_str}${NC}"
+    read -p "请直接回车使用此范围，或手动输入: " input_range
+
+    local target_range=""
+    if [ -z "$input_range" ]; then
+        target_range="$default_range_str"
+    else
+        if [[ "$input_range" =~ ^[0-9]+:[0-9]+$ ]]; then
+            target_range="$input_range"
+        else
+            error "格式错误，请使用 起始端口:结束端口 的格式"
+            return
+        fi
+    fi
+
+    local range_start=$(echo $target_range | cut -d: -f1)
+    local range_end=$(echo $target_range | cut -d: -f2)
+
+    echo -e "\n${YELLOW}即将应用配置:${NC}"
+    echo "  Hy2 目标端口: $hy2_port"
+    echo "  跳跃端口范围: $target_range (UDP)"
+    read -p "确认继续吗? (y/n): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then echo "已取消"; return; fi
+
+    surgical_cleanup
+
+    info "正在配置 UFW 放行新端口范围..."
+    ufw allow ${target_range}/udp >/dev/null
+
+    info "正在写入 UFW 配置文件..."
+    mkdir -p $BACKUP_DIR
+    cp $UFW_RULES_FILE "${BACKUP_DIR}/before.rules.$(date +%F_%T).bak"
+    
+    local nat_rules="# --- HY2-PORT-HOPPING-START ---
+*nat
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -p udp --dport ${target_range} -j REDIRECT --to-ports ${hy2_port}
+COMMIT
+# --- HY2-PORT-HOPPING-END ---"
+
+    if grep -q "\*filter" $UFW_RULES_FILE; then
+        nat_rules=${nat_rules//\//\\/}
+        nat_rules=${nat_rules//\n/\\n}
+        awk -v rules="$nat_rules" '/\*filter/ && !x {print rules; x=1} {print}' $UFW_RULES_FILE > "${UFW_RULES_FILE}.tmp" && mv "${UFW_RULES_FILE}.tmp" $UFW_RULES_FILE
+        success "配置文件修改完成。"
+    else
+        error "无法在 $UFW_RULES_FILE 中找到 *filter 标记。"
+        exit 1
+    fi
+
+    info "重载 UFW 防火墙 (Reload)..."
+    ufw reload
+
+    success "端口跳跃配置完成！"
+    echo
+    echo -e "${GREEN}当前 NAT 规则验证:${NC}"
+    iptables -t nat -L PREROUTING -n -v --line-numbers | grep "dpts:${range_start}:${range_end}"
+}
+
+# --- 功能 2: 显示规则 ---
+show_rules() {
+    echo -e "${CYAN}--- 当前端口跳跃规则状态 ---${NC}"
+    echo -e "\n${YELLOW}[1] 配置文件内容 ($UFW_RULES_FILE):${NC}"
+    if grep -q "HY2-PORT-HOPPING-START" $UFW_RULES_FILE; then
+        sed -n '/HY2-PORT-HOPPING-START/,/HY2-PORT-HOPPING-END/p' $UFW_RULES_FILE
+    else
+        echo "未发现脚本管理的跳跃配置。"
+    fi
+    echo -e "\n${YELLOW}[2] 内存中生效的 REDIRECT 规则:${NC}"
+    iptables -t nat -L PREROUTING -n -v --line-numbers | grep "REDIRECT"
+    echo -e "\n${YELLOW}[3] UFW 放行状态:${NC}"
+    ufw status | grep "Allow" | grep "udp" | head -n 5
+}
+
+# --- 功能 3: 删除规则 ---
+remove_all() {
+    check_ufw
+    echo -e "${RED}警告：这将清除由本脚本添加的端口跳跃设置！${NC}"
+    read -p "确定要清空还原吗? (y/n): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then echo "已取消"; return; fi
+    surgical_cleanup
+    ufw reload
+    success "清理完成。"
+}
+
+# --- 主菜单 ---
+show_menu() {
+    clear
+    echo -e "${CYAN}==============================================${NC}"
+    echo -e "${GREEN} Hysteria2 端口跳跃助手 (100%安全扫描版) ${NC}"
+    echo -e "${CYAN}==============================================${NC}"
+    echo -e "1. 添加/重置 端口跳跃 (Add Hopping)"
+    echo -e "2. 查看 当前规则状态 (Show Rules)"
+    echo -e "3. 删除 所有跳跃配置 (Remove All)"
+    echo -e "0. 退出脚本 (Exit)"
+    echo -e "----------------------------------------------"
+    read -p "请输入选项 [0-3]: " choice
+    case "$choice" in 1) add_hopping ;; 2) show_rules ;; 3) remove_all ;; 0) exit 0 ;; *) error "无效输入";; esac
+    echo; read -p "按回车键返回菜单..."
+}
+
+# --- 运行入口 ---
+check_root
+if ! command -v netstat &>/dev/null; then
+    apt-get update -y && apt-get install -y net-tools >/dev/null 2>&1
+fi
+while true; do show_menu; done
