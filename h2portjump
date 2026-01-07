@@ -153,8 +153,6 @@ COMMIT
 # --- 功能 2: 显示规则 ---
 show_rules() {
     check_and_enable_ufw
-    echo "  Hy2 目标端口: $hy2_port"
-    echo "  跳跃端口范围: $target_range_client (UDP)"
     echo -e "${CYAN}--- 当前端口跳跃规则状态 ---${NC}"
     echo -e "\n${YELLOW}[1] 配置文件内容 ($UFW_RULES_FILE):${NC}"
     if grep -q "HY2-PORT-HOPPING-START" $UFW_RULES_FILE; then sed -n '/HY2-PORT-HOPPING-START/,/HY2-PORT-HOPPING-END/p' $UFW_RULES_FILE; else echo "未发现脚本管理的跳跃配置。"; fi
