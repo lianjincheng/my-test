@@ -412,7 +412,7 @@ display_and_store_config_info() {
 
     echo -e "${GREEN} 1. [智能] Hysteria2 ${WARP_STATUS}${NC}"
     local HY2_BASE="hy2://${HY2_SMART_PASSWORD}@"
-    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1"
+    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&alpn=h3&allowInsecure=1"
     
     if [ -n "$IPV4_ADDR" ]; then
         echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-warp-IPv4"
