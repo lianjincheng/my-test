@@ -403,6 +403,8 @@ EOF
 display_and_store_config_info() {
     # 修复：在显示前强制加载一次配置，确保从菜单进入时变量存在
     load_persistent_info
+    
+    get_server_ip
 
     echo -e "${MAGENTA}====================================================${NC}"
     local WARP_STATUS=""
@@ -413,10 +415,10 @@ display_and_store_config_info() {
     local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1"
     
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-IPv4"
+        echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-warp-IPv4"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${YELLOW}   [IPv6]:${NC} ${HY2_BASE}[${IPV6_ADDR}]${HY2_PARAMS}#Hy2-IPv6"
+        echo -e "${YELLOW}   [IPv6]:${NC} ${HY2_BASE}[${IPV6_ADDR}]${HY2_PARAMS}#Hy2-warp-IPv6"
     fi
     
     echo
