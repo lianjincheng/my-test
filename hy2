@@ -1,0 +1,254 @@
+#!/bin/bash
+
+# =========================================================
+#  Hysteria 2 官方内核管理脚本 (Pro V4 - 最终优化版)
+#  Fix: 
+#    1. DNS 解析改为 Cloudflare (1.1.1.1)
+#    2. 保持高性能 QUIC 参数
+# =========================================================
+
+# --- 颜色定义 ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# --- 核心路径配置 ---
+BIN_PATH="/usr/local/bin/hysteria"
+CONFIG_DIR="/etc/hysteria"
+CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+CERT_FILE="${CONFIG_DIR}/server.crt"
+KEY_FILE="${CONFIG_DIR}/server.key"
+SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
+
+# --- 辅助函数 ---
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+
+check_root() { if [ "$(id -u)" -ne 0 ]; then error "请使用 root 权限运行此脚本"; exit 1; fi; }
+
+# --- 1. 环境清理与检查 ---
+cleanup_environment() {
+    local mode=$1
+    info "正在清理旧的 Hysteria 2 环境..."
+    if systemctl list-units --full -all | grep -q "hysteria-server.service"; then
+        systemctl stop hysteria-server
+        systemctl disable hysteria-server >/dev/null 2>&1
+    fi
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload
+    [ -f "$BIN_PATH" ] && rm -f "$BIN_PATH" && info "已删除二进制文件"
+    [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR" && info "已删除配置目录"
+    if id "hysteria" &>/dev/null; then userdel "hysteria" >/dev/null 2>&1; fi
+    if [ "$mode" == "uninstall" ]; then success "Hysteria 2 已彻底卸载。"; fi
+}
+
+# --- 2. 依赖安装 ---
+install_dependencies() {
+    info "安装必要依赖..."
+    local deps=("curl" "openssl" "wget")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            if [ -f /etc/debian_version ]; then apt-get update -y && apt-get install -y "$dep";
+            elif [ -f /etc/redhat-release ]; then yum install -y "$dep"; fi
+        fi
+    done
+}
+
+# --- 3. 获取最新内核 ---
+install_kernel() {
+    info "下载 Hysteria 2 官方内核..."
+    local ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        *) error "不支持的架构: $ARCH"; exit 1 ;;
+    esac
+    local LATEST_VER=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -z "$LATEST_VER" ]; then error "获取版本失败"; exit 1; fi
+    info "最新版本: $LATEST_VER"
+    local URL="https://github.com/apernet/hysteria/releases/download/${LATEST_VER}/hysteria-linux-${ARCH}"
+    curl -L -o "$BIN_PATH" "$URL" --retry 3
+    if [ ! -f "$BIN_PATH" ]; then error "下载失败！"; exit 1; fi
+    chmod +x "$BIN_PATH"
+    success "内核安装完成。"
+}
+
+# --- 4. 证书生成 ---
+generate_cert() {
+    info "生成自签名证书 (CN=cdn.jsdelivr.net)..."
+    mkdir -p "$CONFIG_DIR"
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "$KEY_FILE" -out "$CERT_FILE" -days 36500 -subj "/CN=cdn.jsdelivr.net" 2>/dev/null
+    chmod 644 "$CERT_FILE"; chmod 600 "$KEY_FILE"
+}
+
+# --- 5. 生成配置文件 ---
+create_config() {
+    PORT=$(shuf -i 10000-65535 -n 1)
+    AUTH_PASS=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
+    OBFS_PASS=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
+    info "正在生成优化配置文件 (DNS: 1.1.1.1)..."
+    cat > "$CONFIG_FILE" <<EOF
+listen: :$PORT
+tls:
+  cert: $CERT_FILE
+  key: $KEY_FILE
+auth:
+  type: password
+  password: $AUTH_PASS
+obfs:
+  type: salamander
+  password: $OBFS_PASS
+quic:
+  initStreamReceiveWindow: 2097152 
+  maxStreamReceiveWindow: 2097152 
+  initConnReceiveWindow: 8388608 
+  maxConnReceiveWindow: 8388608 
+  maxIdleTimeout: 30s 
+  disablePathMTUDiscovery: false
+resolver:
+  type: udp
+  udp:
+    addr: 1.1.1.1:53 
+    timeout: 4s 
+sniff:
+  enable: true 
+  rewriteDomain: false 
+  tcpPorts: 80,443,8000-9000 
+  udpPorts: all
+masquerade:
+  type: proxy
+  proxy:
+    url: https://cdn.jsdelivr.net/ 
+    rewriteHost: true
+EOF
+}
+
+# --- 6. 检查与启动 ---
+start_service() {
+    info "执行语法检查..."
+    if ! "$BIN_PATH" check-config -c "$CONFIG_FILE"; then error "配置文件语法错误！"; exit 1; fi
+    success "配置语法正确。"
+    info "配置 Systemd 服务 (Root运行)..."
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Hysteria Server Service (Official)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_PATH server --config $CONFIG_FILE
+WorkingDirectory=/etc/hysteria
+Environment=HYSTERIA_LOG_LEVEL=info
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable hysteria-server >/dev/null 2>&1
+    systemctl restart hysteria-server
+    sleep 2
+    if systemctl is-active --quiet hysteria-server; then success "Hysteria 2 启动成功！"; else error "启动失败！"; journalctl -u hysteria-server --no-pager -n 20; exit 1; fi
+}
+
+# --- 7. 输出信息 (双栈适配) ---
+show_info() {
+    IPV4=$(curl -s4m5 https://ip.sb -k || curl -s4m5 https://icanhazip.com -k)
+    IPV6=$(curl -s6m5 https://ip.sb -k || curl -s6m5 https://icanhazip.com -k)
+    
+    L_PORT=$(grep "listen:" $CONFIG_FILE | awk '{print $2}' | sed 's/://')
+    L_PASS=$(grep -A 2 "auth:" $CONFIG_FILE | grep "password:" | awk '{print $2}')
+    L_OBFS=$(grep -A 2 "obfs:" $CONFIG_FILE | grep "password:" | awk '{print $2}')
+    L_SNI="cdn.jsdelivr.net"
+
+    echo -e "${YELLOW}===============================================${NC}"
+    echo -e "${GREEN}      Hysteria 2 Pro 配置信息 (个人专用)      ${NC}"
+    echo -e "${YELLOW}===============================================${NC}"
+    echo -e "端口       : ${CYAN}${L_PORT}${NC}"
+    echo -e "认证密码   : ${CYAN}${L_PASS}${NC}"
+    echo -e "混淆密码   : ${CYAN}${L_OBFS}${NC}"
+    echo -e "伪装 SNI   : ${CYAN}${L_SNI}${NC}"
+    echo -e "允许不安全 : ${CYAN}True${NC}"
+    echo -e "${YELLOW}-----------------------------------------------${NC}"
+
+    LINK_BASE="hysteria2://$L_PASS@"
+    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI&obfs=salamander&obfs-password=$L_OBFS"
+
+    if [ -n "$IPV4" ]; then
+        echo -e "本地 IP (IPv4): ${CYAN}${IPV4}${NC}"
+        echo -e "${GREEN}IPv4 分享链接:${NC}"
+        echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS}#Hy2-Pro-IPv4${NC}"
+        echo
+    fi
+
+    if [ -n "$IPV6" ]; then
+        echo -e "本地 IP (IPv6): ${CYAN}${IPV6}${NC}"
+        echo -e "${GREEN}IPv6 分享链接 (更推荐):${NC}"
+        echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS}#Hy2-Pro-IPv6${NC}"
+        echo
+    fi
+
+    if [ -z "$IPV4" ] && [ -z "$IPV6" ]; then
+        warn "未检测到公网 IP，请自行检查网络配置。"
+    fi
+    echo -e "${YELLOW}===============================================${NC}"
+}
+
+# --- 菜单 ---
+install() {
+    cleanup_environment install
+    install_dependencies
+    install_kernel
+    generate_cert
+    create_config
+    start_service
+    show_info
+}
+
+show_menu() {
+    clear
+    echo -e "${BLUE}=======================================${NC}"
+    echo -e "   Hysteria 2 官方内核脚本 (Pro V4)"
+    echo -e "${BLUE}=======================================${NC}"
+    echo -e "1. 安装 / 重置 (随机高强参数)"
+    echo -e "2. 查看 配置 & 双栈链接"
+    echo -e "3. 修改 端口 (随机更换)"
+    echo -e "4. 停止 / 5. 启动 / 6. 重启"
+    echo -e "7. 查看 日志"
+    echo -e "8. 彻底卸载"
+    echo -e "0. 退出"
+    echo -e "---------------------------------------"
+    read -p "请选择: " c
+    case "$c" in
+        1) install ;;
+        2) if [ -f "$CONFIG_FILE" ]; then show_info; else error "未安装"; fi ;;
+        3) 
+           if [ -f "$CONFIG_FILE" ]; then
+               NEW_PORT=$(shuf -i 10000-65535 -n 1)
+               sed -i "s/^listen: :.*/listen: :$NEW_PORT/" $CONFIG_FILE
+               info "端口已修改为: $NEW_PORT"
+               start_service; show_info
+           else error "未安装"; fi ;;
+        4) systemctl stop hysteria-server && success "已停止" ;;
+        5) systemctl start hysteria-server && success "已启动" ;;
+        6) systemctl restart hysteria-server && success "已重启" ;;
+        7) journalctl -u hysteria-server -f ;;
+        8) cleanup_environment uninstall ;;
+        0) exit 0 ;;
+        *) error "无效输入" ;;
+    esac
+    echo; read -p "按回车键返回菜单..."
+    show_menu
+}
+
+check_root
+show_menu
