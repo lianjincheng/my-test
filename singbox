@@ -510,13 +510,13 @@ restart_all_services() {
     
     # 重启 Sing-box
     systemctl restart sing-box
-    
-    # 重启 Argo
+
+    # 先清空旧日志，等待新连接日志写入
+    echo "" > "$ARGO_LOG_FILE"
+
+    # 再重启 Argo，防止误删启动成功的日志
     # 注意：重启 Argo 会导致域名变化，需要重新抓取
     systemctl restart argo
-    
-    # 清空旧日志，等待新连接日志写入
-    echo "" > "$ARGO_LOG_FILE"
     
     # 检查 Sing-box
     if ! systemctl is-active --quiet sing-box; then
