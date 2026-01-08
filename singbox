@@ -31,7 +31,6 @@ IPV6_ADDR=""
 # Node Vars
 HY2_SMART_PORT=""
 HY2_SMART_PASSWORD=""
-HY2_OBFS_PASSWORD=""
 ARGO_PORT=""
 ARGO_UUID=""
 ARGO_PATH="/argo" 
@@ -75,7 +74,6 @@ save_persistent_info() {
         cat > "$PERSISTENT_INFO_FILE" <<EOF
 HY2_SMART_PORT="${HY2_SMART_PORT}"
 HY2_SMART_PASSWORD="${HY2_SMART_PASSWORD}"
-HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
 ARGO_PORT="${ARGO_PORT}"
 ARGO_UUID="${ARGO_UUID}"
 WARP_PRIVATE_KEY="${WARP_PRIVATE_KEY}"
@@ -349,8 +347,7 @@ EOF
       "listen": "::",
       "listen_port": ${HY2_SMART_PORT},
       "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
-      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" },
-      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PASSWORD}" }
+      "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" }
     },
     {
       "type": "vless",
@@ -411,7 +408,7 @@ display_and_store_config_info() {
 
     echo -e "${GREEN} 1. [智能] Hysteria2 ${WARP_STATUS}${NC}"
     local HY2_BASE="hy2://${HY2_SMART_PASSWORD}@"
-    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD}"
+    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1"
     
     if [ -n "$IPV4_ADDR" ]; then
         echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-IPv4"
@@ -466,7 +463,6 @@ install_all_nodes() {
     HY2_SMART_PORT=$(shuf -i 10000-65535 -n 1)
     ARGO_PORT=$(shuf -i 10000-65535 -n 1)
     HY2_SMART_PASSWORD=$(generate_random_password)
-    HY2_OBFS_PASSWORD=$(generate_random_password)
     ARGO_UUID=$($SINGBOX_CMD generate uuid) 
     generate_self_signed_cert
     
