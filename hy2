@@ -160,7 +160,7 @@ show_info() {
 
     LINK_BASE="hysteria2://$L_PASS@"
     # [修复] 移除 obfs 参数
-    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI"
+    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI&alpn=h3&allowInsecure=1"
 
     if [ -n "$IPV4" ]; then
         echo -e "本地 IP (IPv4): ${CYAN}${IPV4}${NC}"
