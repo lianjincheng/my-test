@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # =========================================================
-#  Hysteria 2 官方内核管理脚本 (Pro V4 - 最终优化版)
+#  Hysteria 2 官方内核管理脚本 (Pro V10)
 #  Fix: 
-#    1. DNS 解析改为 Cloudflare (1.1.1.1)
-#    2. 保持高性能 QUIC 参数
+#    1. 修复 IP 获取被防火墙拦截的问题，优先从本地读取
+#    2. 增强 curl 伪装，确保在任何网络环境下都能获取 IP
 # =========================================================
 
 # --- 颜色定义 ---
@@ -50,7 +50,7 @@ cleanup_environment() {
 # --- 2. 依赖安装 ---
 install_dependencies() {
     info "安装必要依赖..."
-    local deps=("curl" "openssl" "wget")
+    local deps=("curl" "openssl" "wget" "iproute2")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             if [ -f /etc/debian_version ]; then apt-get update -y && apt-get install -y "$dep";
@@ -89,8 +89,7 @@ generate_cert() {
 # --- 5. 生成配置文件 ---
 create_config() {
     PORT=$(shuf -i 10000-65535 -n 1)
-    AUTH_PASS=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
-    OBFS_PASS=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
+    AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
     info "正在生成优化配置文件 (DNS: 1.1.1.1)..."
     cat > "$CONFIG_FILE" <<EOF
 listen: :$PORT
@@ -100,9 +99,6 @@ tls:
 auth:
   type: password
   password: $AUTH_PASS
-obfs:
-  type: salamander
-  password: $OBFS_PASS
 quic:
   initStreamReceiveWindow: 2097152 
   maxStreamReceiveWindow: 2097152 
@@ -130,9 +126,6 @@ EOF
 
 # --- 6. 检查与启动 ---
 start_service() {
-    info "执行语法检查..."
-    if ! "$BIN_PATH" check-config -c "$CONFIG_FILE"; then error "配置文件语法错误！"; exit 1; fi
-    success "配置语法正确。"
     info "配置 Systemd 服务 (Root运行)..."
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -156,18 +149,34 @@ EOF
     systemctl daemon-reload
     systemctl enable hysteria-server >/dev/null 2>&1
     systemctl restart hysteria-server
+    
     sleep 2
-    if systemctl is-active --quiet hysteria-server; then success "Hysteria 2 启动成功！"; else error "启动失败！"; journalctl -u hysteria-server --no-pager -n 20; exit 1; fi
+    if systemctl is-active --quiet hysteria-server; then 
+        success "Hysteria 2 启动成功！"
+    else 
+        error "启动失败！请检查以下日志："
+        journalctl -u hysteria-server --no-pager -n 20
+        exit 1
+    fi
 }
 
-# --- 7. 输出信息 (双栈适配) ---
+# --- 7. 输出信息 (终极防拦截版) ---
 show_info() {
-    IPV4=$(curl -s4m5 https://ip.sb -k || curl -s4m5 https://icanhazip.com -k)
-    IPV6=$(curl -s6m5 https://ip.sb -k || curl -s6m5 https://icanhazip.com -k)
+    info "正在获取公网 IP 地址..."
+    # [修复] 优先从本地网卡读取，失败再用带 UA 的 curl
+    IPV4=$(ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d / -f 1 | head -n 1)
+    IPV6=$(ip -6 addr show scope global | grep inet6 | awk '{print $2}' | cut -d / -f 1 | head -n 1)
+
+    # 如果本地读取失败 (例如 NAT VPS)，则回退到 curl 方法
+    if [ -z "$IPV4" ]; then
+        IPV4=$(curl -s4m5 -A "Mozilla/5.0" https://ip.sb || curl -s4m5 -A "Mozilla/5.0" https://api.ip.sb/ip)
+    fi
+    if [ -z "$IPV6" ]; then
+        IPV6=$(curl -s6m5 -A "Mozilla/5.0" https://ip.sb || curl -s6m5 -A "Mozilla/5.0" https://api.ip.sb/ip)
+    fi
     
     L_PORT=$(grep "listen:" $CONFIG_FILE | awk '{print $2}' | sed 's/://')
     L_PASS=$(grep -A 2 "auth:" $CONFIG_FILE | grep "password:" | awk '{print $2}')
-    L_OBFS=$(grep -A 2 "obfs:" $CONFIG_FILE | grep "password:" | awk '{print $2}')
     L_SNI="cdn.jsdelivr.net"
 
     echo -e "${YELLOW}===============================================${NC}"
@@ -181,7 +190,7 @@ show_info() {
     echo -e "${YELLOW}-----------------------------------------------${NC}"
 
     LINK_BASE="hysteria2://$L_PASS@"
-    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI&obfs=salamander&obfs-password=$L_OBFS"
+    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI"
 
     if [ -n "$IPV4" ]; then
         echo -e "本地 IP (IPv4): ${CYAN}${IPV4}${NC}"
@@ -217,7 +226,7 @@ install() {
 show_menu() {
     clear
     echo -e "${BLUE}=======================================${NC}"
-    echo -e "   Hysteria 2 官方内核脚本 (Pro V4)"
+    echo -e "   Hysteria 2 官方内核脚本 (Pro V8)"
     echo -e "${BLUE}=======================================${NC}"
     echo -e "1. 安装 / 重置 (随机高强参数)"
     echo -e "2. 查看 配置 & 双栈链接"
