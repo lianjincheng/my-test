@@ -87,26 +87,27 @@ auth:
   type: password
   password: $AUTH_PASS
 quic:
-  initStreamReceiveWindow: 2097152 
-  maxStreamReceiveWindow: 2097152 
-  initConnReceiveWindow: 8388608 
-  maxConnReceiveWindow: 8388608 
-  maxIdleTimeout: 30s 
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 30s
   disablePathMTUDiscovery: false
+ignoreClientBandwidth: true
 resolver:
   type: udp
   udp:
-    addr: 1.1.1.1:53 
-    timeout: 4s 
+    addr: 1.1.1.1:53
+    timeout: 4s
 sniff:
-  enable: true 
-  rewriteDomain: false 
-  tcpPorts: 80,443,8000-9000 
+  enable: true
+  rewriteDomain: false
+  tcpPorts: 80,443,8000-9000
   udpPorts: all
 masquerade:
   type: proxy
   proxy:
-    url: https://cdn.jsdelivr.net/ 
+    url: https://cdn.jsdelivr.net/
     rewriteHost: true
 EOF
 }
