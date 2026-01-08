@@ -3,6 +3,7 @@
 # =========================================================
 #  Sing-Box 全能版 (Argo Systemd 守护版)
 #  Fix: 修复 UUID 丢失问题，分离保存与读取逻辑
+#  Fix: 修复所有语法错误，彻底移除混淆和带宽限制
 # =========================================================
 
 # --- Configuration ---
@@ -16,7 +17,8 @@ CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
 ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
 ARGO_SERVICE_FILE="/etc/systemd/system/argo.service"
 
-HYSTERIA_CERT_DIR="${SINGBOX_CONFIG_DIR}/cert
+# [核心] 证书目录修正为 Sing-box 自己的目录
+HYSTERIA_CERT_DIR="${SINGBOX_CONFIG_DIR}/cert"
 HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
 HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 
@@ -289,7 +291,7 @@ setup_warp() {
 }
 
 generate_self_signed_cert() {
-    if [ -f "$HYSTERIA_CERT_PEM" ]; then return 0; fi
+    # 强制重新生成，以适应新路径
     mkdir -p "$HYSTERIA_CERT_DIR"
     openssl req -new -x509 -days 36500 -nodes -subj "/CN=$DEFAULT_HYSTERIA_MASQUERADE_CN" -keyout "$HYSTERIA_CERT_KEY" -out "$HYSTERIA_CERT_PEM"
 }
@@ -495,6 +497,9 @@ uninstall_singbox() {
         force_cleanup
         rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_CMD"
         rm -rf "$SINGBOX_CONFIG_DIR"
+        # [核心修复] 这里删的是 /usr/local/etc/sing-box/cert (变量值)，而不是 /etc/hysteria
+        # 实际上，上面这行 rm -rf "$SINGBOX_CONFIG_DIR" 已经包含 cert 目录了
+        # 为了保险起见，我们不再显式删除外部目录，让它随主目录一起消失
         rm -f "$CLOUDFLARED_PATH"
         success "已卸载。"
     fi
@@ -509,12 +514,9 @@ restart_all_services() {
     
     # 重启 Sing-box
     systemctl restart sing-box
-
-    # 先清空旧日志，等待新连接日志写入
+    
+    # [顺序修复] 先清空，再重启，防竞态
     echo "" > "$ARGO_LOG_FILE"
-
-    # 再重启 Argo，防止误删启动成功的日志
-    # 注意：重启 Argo 会导致域名变化，需要重新抓取
     systemctl restart argo
     
     # 检查 Sing-box
