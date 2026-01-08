@@ -122,7 +122,7 @@ After=network.target
 Type=simple
 ExecStart=$BIN_PATH server --config $CONFIG_FILE
 WorkingDirectory=/etc/hysteria
-Environment=HYSTERIA_LOG_LEVEL=info
+Environment=HYSTERIA_LOG_LEVEL=error
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 NoNewPrivileges=true
