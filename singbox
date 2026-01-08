@@ -16,7 +16,7 @@ CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
 ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
 ARGO_SERVICE_FILE="/etc/systemd/system/argo.service"
 
-HYSTERIA_CERT_DIR="/etc/hysteria"
+HYSTERIA_CERT_DIR="${SINGBOX_CONFIG_DIR}/cert
 HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
 HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 
@@ -495,7 +495,6 @@ uninstall_singbox() {
         force_cleanup
         rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_CMD"
         rm -rf "$SINGBOX_CONFIG_DIR"
-        rm -rf "$HYSTERIA_CERT_DIR"
         rm -f "$CLOUDFLARED_PATH"
         success "已卸载。"
     fi
