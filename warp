@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==================================================
-# 纯净版 WARP SOCKS5 安装脚本 (针对 Hysteria 2 优化)
-# 功能：仅安装官方客户端并开启端口 40000
+# 纯净版 WARP SOCKS5 安装脚本 (修复版 V2)
+# 功能：自动补全依赖 + 强制重置环境 + 开启端口 40000
 # ==================================================
 
 RED='\033[0;31m'
@@ -12,19 +12,33 @@ NC='\033[0m'
 
 PROXY_PORT=40000
 
-# 1. 检查环境
+# 1. 检查 Root 权限
 if [[ $EUID -ne 0 ]]; then echo -e "${RED}错误：请使用 root 权限运行${NC}"; exit 1; fi
 
-# 2. 安装 Cloudflare WARP 官方客户端
-echo -e "${CYAN}正在安装 Cloudflare WARP...${NC}"
+echo -e "${CYAN}>>> [1/4] 正在准备环境与安装依赖...${NC}"
+
+# 2. 安装基础依赖 (修复 netstat not found 问题)
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
+        apt-get update -y
+        # 重点：安装 net-tools 和其他必要工具
+        apt-get install -y curl wget gnupg lsb-release net-tools
+        
+        # 添加 Cloudflare GPG Key 和源
         curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $VERSION_CODENAME main" > /etc/apt/sources.list.d/cloudflare-client.list
+        
+        echo -e "${CYAN}>>> [2/4] 正在安装 WARP 客户端...${NC}"
         apt-get update -y && apt-get install -y cloudflare-warp
+
     elif [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "almalinux" || "$ID" == "rocky" ]]; then
+        # 重点：安装 net-tools
+        yum install -y curl wget net-tools
+        
         rpm -ivh https://pkg.cloudflareclient.com/cloudflare-release-el8.rpm 2>/dev/null
+        
+        echo -e "${CYAN}>>> [2/4] 正在安装 WARP 客户端...${NC}"
         yum install -y cloudflare-warp
     else
         echo -e "${RED}不支持的系统，请更换 Ubuntu/Debian/CentOS${NC}"; exit 1
@@ -33,32 +47,44 @@ else
     echo -e "${RED}无法检测系统版本${NC}"; exit 1
 fi
 
-# 3. 配置 SOCKS5 模式
-echo -e "${CYAN}正在配置 WARP 代理模式 (端口: $PROXY_PORT)...${NC}"
+# 3. 配置 WARP (先清理旧配置，防冲突)
+echo -e "${CYAN}>>> [3/4] 正在配置 SOCKS5 代理 (端口: $PROXY_PORT)...${NC}"
+
+# 尝试断开并删除旧注册 (如果有)
+warp-cli --accept-tos disconnect >/dev/null 2>&1
+warp-cli --accept-tos delete >/dev/null 2>&1
+
+# 全新注册
 warp-cli --accept-tos registration new >/dev/null 2>&1
+# 设置模式为 Proxy
 warp-cli --accept-tos mode proxy >/dev/null 2>&1
+# 设置端口
 warp-cli --accept-tos proxy port $PROXY_PORT >/dev/null 2>&1
+# 连接
 warp-cli --accept-tos connect >/dev/null 2>&1
 
-# 4. 等待连接并验证
-echo -e "${CYAN}正在等待连接建立...${NC}"
+# 4. 验证与测试
+echo -e "${CYAN}>>> [4/4] 正在验证服务状态...${NC}"
 sleep 5
 
-# 检查端口监听
+# 现在 netstat 一定存在了
 if netstat -tlnp | grep -q ":$PROXY_PORT"; then
     echo -e "${GREEN}SUCCESS: WARP 本地代理已启动！${NC}"
     echo -e "监听地址: ${GREEN}127.0.0.1:$PROXY_PORT${NC}"
 else
-    echo -e "${RED}ERROR: 端口未启动，请检查 warp-svc 服务状态。${NC}"
+    echo -e "${RED}ERROR: 端口未启动，请尝试运行: systemctl restart warp-svc${NC}"
     exit 1
 fi
 
-# 检查出口 IP
-echo -e "${CYAN}测试 WARP 连通性...${NC}"
+# 测试连通性
+echo -e "${CYAN}测试 WARP 连通性 (访问 ip.sb)...${NC}"
 WARP_IP=$(curl -x socks5://127.0.0.1:$PROXY_PORT -s --max-time 5 ip.sb)
+
 if [ -n "$WARP_IP" ]; then
     echo -e "WARP 出口 IP: ${GREEN}$WARP_IP${NC}"
-    echo -e "${GREEN}安装完成！现在请修改 Hysteria 2 配置文件。${NC}"
+    echo -e "${GREEN}==========================================${NC}"
+    echo -e "${GREEN}安装成功！请继续配置你的 Hysteria 2 / Sing-box${NC}"
+    echo -e "${GREEN}==========================================${NC}"
 else
-    echo -e "${RED}无法通过 WARP 联网，请检查网络环境。${NC}"
+    echo -e "${RED}警告: 端口已开启，但无法获取 IP。可能是 Cloudflare 网络波动，请稍后再试。${NC}"
 fi
