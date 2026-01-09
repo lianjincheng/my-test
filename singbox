@@ -348,7 +348,7 @@ EOF
       "tag": "hy2-smart",
       "listen": "::",
       "listen_port": ${HY2_SMART_PORT},
-      "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
+      "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],"ignore_client_bandwidth": false,
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" }
     },
     {
