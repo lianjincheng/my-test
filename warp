@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# ==================================================
+# 纯净版 WARP SOCKS5 安装脚本 (针对 Hysteria 2 优化)
+# 功能：仅安装官方客户端并开启端口 40000
+# ==================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+PROXY_PORT=40000
+
+# 1. 检查环境
+if [[ $EUID -ne 0 ]]; then echo -e "${RED}错误：请使用 root 权限运行${NC}"; exit 1; fi
+
+# 2. 安装 Cloudflare WARP 官方客户端
+echo -e "${CYAN}正在安装 Cloudflare WARP...${NC}"
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
+        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $VERSION_CODENAME main" > /etc/apt/sources.list.d/cloudflare-client.list
+        apt-get update -y && apt-get install -y cloudflare-warp
+    elif [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "almalinux" || "$ID" == "rocky" ]]; then
+        rpm -ivh https://pkg.cloudflareclient.com/cloudflare-release-el8.rpm 2>/dev/null
+        yum install -y cloudflare-warp
+    else
+        echo -e "${RED}不支持的系统，请更换 Ubuntu/Debian/CentOS${NC}"; exit 1
+    fi
+else
+    echo -e "${RED}无法检测系统版本${NC}"; exit 1
+fi
+
+# 3. 配置 SOCKS5 模式
+echo -e "${CYAN}正在配置 WARP 代理模式 (端口: $PROXY_PORT)...${NC}"
+warp-cli --accept-tos registration new >/dev/null 2>&1
+warp-cli --accept-tos mode proxy >/dev/null 2>&1
+warp-cli --accept-tos proxy port $PROXY_PORT >/dev/null 2>&1
+warp-cli --accept-tos connect >/dev/null 2>&1
+
+# 4. 等待连接并验证
+echo -e "${CYAN}正在等待连接建立...${NC}"
+sleep 5
+
+# 检查端口监听
+if netstat -tlnp | grep -q ":$PROXY_PORT"; then
+    echo -e "${GREEN}SUCCESS: WARP 本地代理已启动！${NC}"
+    echo -e "监听地址: ${GREEN}127.0.0.1:$PROXY_PORT${NC}"
+else
+    echo -e "${RED}ERROR: 端口未启动，请检查 warp-svc 服务状态。${NC}"
+    exit 1
+fi
+
+# 检查出口 IP
+echo -e "${CYAN}测试 WARP 连通性...${NC}"
+WARP_IP=$(curl -x socks5://127.0.0.1:$PROXY_PORT -s --max-time 5 ip.sb)
+if [ -n "$WARP_IP" ]; then
+    echo -e "WARP 出口 IP: ${GREEN}$WARP_IP${NC}"
+    echo -e "${GREEN}安装完成！现在请修改 Hysteria 2 配置文件。${NC}"
+else
+    echo -e "${RED}无法通过 WARP 联网，请检查网络环境。${NC}"
+fi
