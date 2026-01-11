@@ -157,8 +157,7 @@ install_node() {
     while true; do
         PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
         PORT_LO=65535
-        if [ "$PORT_XHTTP" != "$PORT_VISION" ] && \
-           [ "$PORT_XHTTP" != "$PORT_LO" ]; then
+        if [ "$PORT_XHTTP" != "$PORT_LO" ]; then
             break
         fi
     done
