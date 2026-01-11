@@ -56,15 +56,13 @@ check_root() {
 # --- 强力清理旧进程 ---
 force_cleanup() {
     # 先停止当前服务，释放端口
+    systemctl stop xray-vision >/dev/null 2>&1
+    systemctl disable xray-vision >/dev/null 2>&1
+    # 清理其他旧服务，防止端口冲突
+    systemctl stop xray-xhttp >/dev/null 2>&1
+    systemctl disable xray-xhttp >/dev/null 2>&1
     systemctl stop xray-dual >/dev/null 2>&1
     systemctl disable xray-dual >/dev/null 2>&1
-    
-    # 清理旧服务
-    systemctl stop xray-official >/dev/null 2>&1
-    systemctl disable xray-official >/dev/null 2>&1
-    systemctl stop xray-enc >/dev/null 2>&1
-    systemctl disable xray-enc >/dev/null 2>&1
-    systemctl stop xray-xhttp >/dev/null 2>&1 # 清理单协议版残留
 
     local pid=$(pgrep -f "${XRAY_BIN}")
     if [ -n "$pid" ]; then
