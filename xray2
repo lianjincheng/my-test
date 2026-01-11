@@ -9,11 +9,11 @@
 # =========================================================
 
 # --- 基础配置 ---
-INSTALL_DIR="/root/xray_dual_node"
+INSTALL_DIR="/root/xray_node"
 CONFIG_FILE="${INSTALL_DIR}/config.json"
 XRAY_BIN="${INSTALL_DIR}/xray"
-SERVICE_FILE="/etc/systemd/system/xray-dual.service"
-INFO_FILE="${INSTALL_DIR}/.xray_dual_info"
+SERVICE_FILE="/etc/systemd/system/xray-node.service"
+INFO_FILE="${INSTALL_DIR}/.xray_node_info"
 
 # 默认伪装域名 (防偷跑机制将严格锁定此域名)
 DEFAULT_REALITY_SNI="swdist.apple.com"
