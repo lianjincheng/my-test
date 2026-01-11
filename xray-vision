@@ -1,0 +1,344 @@
+#!/bin/bash
+
+# =========================================================
+#  Xray 单协议管理脚本 (Vision + 443 + 防偷跑终极版)
+#  Target Core: XTLS/Xray-core Official (Latest)
+#  Protocol: VLESS + TCP + VISION + REALITY
+#  Port: 443 (Fixed) - Vision 必须用 443 伪装才像
+#  Security: 本地回环 + 路由白名单 (解决 443 偷跑风险)
+# =========================================================
+
+# --- 基础配置 ---
+INSTALL_DIR="/root/xray_vision_node"
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+XRAY_BIN="${INSTALL_DIR}/xray"
+SERVICE_FILE="/etc/systemd/system/xray-vision.service"
+INFO_FILE="${INSTALL_DIR}/.xray_vision_info"
+
+# 默认伪装域名 (防偷跑机制将严格锁定此域名)
+DEFAULT_REALITY_SNI="swdist.apple.com"
+
+# --- 颜色定义 ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# --- 全局变量 ---
+UUID=""
+PORT_VISION="443"  # Vision 强制使用 443
+PORT_LO=""         # 本地回环端口 (随机生成)
+PRIVATE_KEY=""
+PUBLIC_KEY=""
+SHORT_ID=""
+REALITY_SNI=""
+IPV4_ADDR=""
+IPV6_ADDR=""
+
+# --- 辅助函数 ---
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+# --- 检查 Root ---
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "必须使用 root 权限运行此脚本。"
+        exit 1
+    fi
+}
+
+# --- 强力清理旧进程 ---
+force_cleanup() {
+    systemctl stop xray-vision >/dev/null 2>&1
+    systemctl disable xray-vision >/dev/null 2>&1
+    # 清理其他旧服务，防止端口冲突
+    systemctl stop xray-xhttp >/dev/null 2>&1
+    systemctl disable xray-xhttp >/dev/null 2>&1
+    systemctl stop xray-dual >/dev/null 2>&1
+    systemctl disable xray-dual >/dev/null 2>&1
+    
+    local pid=$(pgrep -f "${XRAY_BIN}")
+    if [ -n "$pid" ]; then
+        kill -9 $pid >/dev/null 2>&1
+    fi
+    
+    rm -rf "${INSTALL_DIR}" "/root/xray_xhttp_node" "/root/xray_dual_node"
+}
+
+# --- 检查/安装依赖 ---
+check_dependencies() {
+    local deps=("curl" "wget" "tar" "jq" "openssl" "unzip" "net-tools")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            info "正在安装依赖: $dep ..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -y && apt-get install -y "$dep"
+            elif command -v yum &>/dev/null; then
+                yum install -y "$dep"
+            fi
+        fi
+    done
+}
+
+# --- 443 端口占用检测 ---
+check_port_443() {
+    info "正在检测 443 端口环境..."
+    if netstat -tlunp | grep -w ":443" > /dev/null 2>&1; then
+        error "严重错误：443 端口被占用！请先关闭 Nginx/Apache 等服务。"
+        netstat -tlunp | grep -w ":443"
+        exit 1
+    fi
+}
+
+# --- 保存配置信息 ---
+save_info() {
+    mkdir -p "${INSTALL_DIR}"
+    cat > "$INFO_FILE" <<EOF
+UUID="${UUID}"
+PORT_VISION="${PORT_VISION}"
+PRIVATE_KEY="${PRIVATE_KEY}"
+PUBLIC_KEY="${PUBLIC_KEY}"
+SHORT_ID="${SHORT_ID}"
+REALITY_SNI="${REALITY_SNI}"
+EOF
+}
+
+# --- 加载配置信息 ---
+load_info() {
+    if [ -f "$INFO_FILE" ]; then
+        source "$INFO_FILE"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# --- 获取 IP ---
+get_ip() {
+    IPV4_ADDR=$(curl -s4m5 ip.sb -k)
+    IPV6_ADDR=$(curl -s6m5 ip.sb -k)
+    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
+        IPV4_ADDR="127.0.0.1"
+    fi
+}
+
+# --- 安装核心逻辑 ---
+install_node() {
+    force_cleanup
+    check_dependencies
+    check_port_443
+    
+    mkdir -p "$INSTALL_DIR"
+    
+    info "正在检测架构并下载 Xray 官方最新内核..."
+    local ARCH=$(uname -m)
+    local DOWNLOAD_URL=""
+    
+    case "$ARCH" in
+        aarch64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip" ;;
+        x86_64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" ;;
+        *) error "不支持的架构: $ARCH"; exit 1 ;;
+    esac
+
+    local ZIP_FILE="${INSTALL_DIR}/xray.zip"
+    wget -O "$ZIP_FILE" "$DOWNLOAD_URL" --tries=3
+    unzip -o "$ZIP_FILE" -d "$INSTALL_DIR" >/dev/null 2>&1
+    chmod +x "$XRAY_BIN"
+
+    info "正在生成配置..."
+    UUID=$("$XRAY_BIN" uuid)
+    local KEY_PAIR=$("$XRAY_BIN" x25519)
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
+    SHORT_ID=$(openssl rand -hex 4)
+    REALITY_SNI="$DEFAULT_REALITY_SNI"
+
+    # 生成本地回环端口 (10000-65535)
+    PORT_LO=$(shuf -i 10000-65535 -n 1)
+
+    local LISTEN_ADDR="::"
+    if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
+        LISTEN_ADDR="0.0.0.0"
+    elif [ ! -f /proc/net/if_inet6 ]; then
+        LISTEN_ADDR="0.0.0.0"
+    fi
+
+    # --- 写入配置 (Vision + 本地回环) ---
+    cat > "$CONFIG_FILE" <<EOF
+{
+  "log": { "loglevel": "error" },
+  "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
+  "inbounds": [
+    {
+      "tag": "dokodemo-in",
+      "listen": "127.0.0.1",
+      "port": ${PORT_LO},
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "${REALITY_SNI}",
+        "port": 443,
+        "network": "tcp"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["tls"],
+        "routeOnly": true
+      }
+    },
+    {
+      "tag": "vision-reality",
+      "listen": "${LISTEN_ADDR}",
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${UUID}",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "dest": "127.0.0.1:${PORT_LO}",
+          "serverNames": [ "${REALITY_SNI}" ],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "metadataOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } },
+    { "protocol": "blackhole", "tag": "block" }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": ["dokodemo-in"],
+        "domain": ["${REALITY_SNI}"],
+        "outboundTag": "direct"
+      },
+      {
+        "inboundTag": ["dokodemo-in"],
+        "outboundTag": "block"
+      }
+    ]
+  }
+}
+EOF
+
+    # 验证
+    if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
+        error "配置文件校验失败！"
+        exit 1
+    fi
+
+    info "配置系统服务..."
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Xray Vision Service
+After=network.target
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${XRAY_BIN} run -c ${CONFIG_FILE}
+Restart=on-failure
+RestartSec=5s
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xray-vision >/dev/null 2>&1
+    systemctl restart xray-vision
+    
+    save_info
+    
+    sleep 2
+    if systemctl is-active --quiet xray-vision; then
+        success "安装成功！Vision + 443 + 防偷跑模式已启动。"
+        display_info
+    else
+        error "启动失败！请检查 443 端口占用情况。"
+        journalctl -u xray-vision --no-pager -n 10
+    fi
+}
+
+# --- 显示信息 ---
+display_info() {
+    load_info
+    get_ip
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${GREEN} 节点类型: Vision-Reality (443端口/防偷跑)${NC}"
+    echo -e " Port: ${PORT_VISION} (Fixed)"
+    echo -e " Flow: xtls-rprx-vision"
+    echo -e " Sni : ${REALITY_SNI} (Locked)"
+    echo -e "----------------------------------------------------"
+    
+    local PARAMS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
+    local LINK_BASE="vless://${UUID}@"
+    
+    if [ -n "$IPV4_ADDR" ]; then
+        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS}#Vision-Safe-IPv4${NC}"
+    fi
+    if [ -n "$IPV6_ADDR" ]; then
+        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS}#Vision-Safe-IPv6${NC}"
+    fi
+
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${CYAN}提示：已启用 Vision 流控，速度最快。防盗机制已生效。${NC}"
+}
+
+# --- 卸载 ---
+uninstall_node() {
+    read -p "确定要卸载吗? (y/N): " choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        force_cleanup
+        rm -f "$SERVICE_FILE"
+        systemctl daemon-reload
+        success "卸载完成。"
+    fi
+}
+
+# --- 菜单 ---
+show_menu() {
+    clear
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}   Xray 单协议管理 (Vision + Safe)   ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "1. 安装 / 重置 (443端口)"
+    echo -e "2. 查看节点链接"
+    echo -e "3. 重启服务"
+    echo -e "4. 卸载"
+    echo -e "0. 退出"
+    echo -e "------------------------------------------------"
+    read -p "选择: " c
+    case "$c" in
+        1) install_node ;;
+        2) display_info ;;
+        3) systemctl restart xray-vision && success "已重启" ;;
+        4) uninstall_node ;;
+        0) exit 0 ;;
+        *) echo "无效" ;;
+    esac
+    read -p "按回车继续..."
+}
+
+check_root
+while true; do show_menu; done
