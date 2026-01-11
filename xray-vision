@@ -158,8 +158,8 @@ install_node() {
     SHORT_ID=$(openssl rand -hex 4)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    # 生成本地回环端口 (10000-65535)
-    PORT_LO=$(shuf -i 10000-65535 -n 1)
+    # 生成本地回环端口 ($(shuf -i 10000-65535 -n 1))
+    PORT_LO=65535
 
     local LISTEN_ADDR="::"
     if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
