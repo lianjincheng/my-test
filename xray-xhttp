@@ -53,9 +53,11 @@ check_root() {
 
 # --- 强力清理旧进程 ---
 force_cleanup() {
+    systemctl stop xray-vision >/dev/null 2>&1
+    systemctl disable xray-vision >/dev/null 2>&1
+    # 清理其他旧服务，防止端口冲突
     systemctl stop xray-xhttp >/dev/null 2>&1
     systemctl disable xray-xhttp >/dev/null 2>&1
-    # 清理其他可能存在的服务名
     systemctl stop xray-dual >/dev/null 2>&1
     systemctl disable xray-dual >/dev/null 2>&1
     
