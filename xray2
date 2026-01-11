@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-#  Xray 双协议管理脚本 (官方纯净内核 + 443端口保护版)
+#  Xray 双协议管理脚本 (官方内核 + 443端口 + 防偷跑版)
 #  Target Core: XTLS/Xray-core Official (Latest)
 #  Protocol 1: VLESS + XHTTP + REALITY (强混淆/防封)
 #  Protocol 2: VLESS + TCP + VISION + REALITY (高性能/低延迟)
-#  Fix: 双端口共存 + 443端口占用检测 + 官方内核适配
+#  Security: 本地回环 + 路由白名单 (彻底防止 SNI 偷跑流量)
 # =========================================================
 
 # --- 基础配置 ---
@@ -15,7 +15,7 @@ XRAY_BIN="${INSTALL_DIR}/xray"
 SERVICE_FILE="/etc/systemd/system/xray-dual.service"
 INFO_FILE="${INSTALL_DIR}/.xray_dual_info"
 
-# 默认伪装域名
+# 默认伪装域名 (防偷跑机制将严格锁定此域名)
 DEFAULT_REALITY_SNI="swdist.apple.com"
 
 # --- 颜色定义 ---
@@ -31,6 +31,7 @@ NC='\033[0m'
 UUID=""
 PORT_XHTTP=""   # XHTTP 协议端口
 PORT_VISION="443"  # Vision 协议端口 (固定)
+PORT_LO=""      # [新增] 本地回环防盗端口
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
@@ -63,6 +64,7 @@ force_cleanup() {
     systemctl disable xray-official >/dev/null 2>&1
     systemctl stop xray-enc >/dev/null 2>&1
     systemctl disable xray-enc >/dev/null 2>&1
+    systemctl stop xray-xhttp >/dev/null 2>&1 # 清理单协议版残留
 
     local pid=$(pgrep -f "${XRAY_BIN}")
     if [ -n "$pid" ]; then
@@ -90,13 +92,11 @@ check_dependencies() {
     done
 }
 
-# --- [新增] 443 端口占用检测 ---
+# --- 443 端口占用检测 ---
 check_port_443() {
     info "正在检测 443 端口环境..."
     
     # 使用 netstat 检测 :443 端口
-    # 之前已经执行过 force_cleanup，此时 443 应该为空
-    # 如果此时检测到占用，说明是 Nginx/Apache 等其他软件占用的
     if netstat -tlunp | grep -w ":443" > /dev/null 2>&1; then
         error "严重错误：检测到 443 端口正在被其他程序占用！"
         echo -e "${YELLOW}↓↓↓ 占用详情 (netstat) ↓↓↓${NC}"
@@ -181,10 +181,15 @@ install_node() {
     SHORT_ID=$(openssl rand -hex 4)
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    # 生成两个不重复的随机端口
+    # [核心修改] 生成随机端口，并确保不冲突
     while true; do
         PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
-        if [ "$PORT_XHTTP" != "$PORT_VISION" ]; then
+        PORT_LO=$(shuf -i 10000-65535 -n 1) # 本地回环端口
+        
+        # 确保互不相同，且不等于 443
+        if [ "$PORT_XHTTP" != "$PORT_VISION" ] && \
+           [ "$PORT_LO" != "$PORT_XHTTP" ] && \
+           [ "$PORT_LO" != "$PORT_VISION" ]; then
             break
         fi
     done
@@ -196,12 +201,28 @@ install_node() {
         LISTEN_ADDR="0.0.0.0"
     fi
 
-    # --- 写入双入站配置 ---
+    # --- 写入双入站配置 (含本地回环防盗) ---
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "error" },
   "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
   "inbounds": [
+    {
+      "tag": "dokodemo-in",
+      "listen": "127.0.0.1",
+      "port": ${PORT_LO},
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "${REALITY_SNI}",
+        "port": 443,
+        "network": "tcp"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["tls"],
+        "routeOnly": true
+      }
+    },
     {
       "tag": "xhttp-reality",
       "listen": "${LISTEN_ADDR}",
@@ -221,7 +242,7 @@ install_node() {
         "security": "reality",
         "realitySettings": {
           "fingerprint": "chrome",
-          "dest": "${REALITY_SNI}:443",
+          "dest": "127.0.0.1:${PORT_LO}",
           "serverNames": [ "${REALITY_SNI}" ],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"],"spiderX": "/"
@@ -256,7 +277,7 @@ install_node() {
         "security": "reality",
         "realitySettings": {
           "fingerprint": "chrome",
-          "dest": "${REALITY_SNI}:443",
+          "dest": "127.0.0.1:${PORT_LO}",
           "serverNames": [ "${REALITY_SNI}" ],
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"],"spiderX": "/"
@@ -270,8 +291,22 @@ install_node() {
     }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } }
-  ]
+    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } },
+    { "protocol": "blackhole", "tag": "block" }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": ["dokodemo-in"],
+        "domain": ["${REALITY_SNI}"],
+        "outboundTag": "direct"
+      },
+      {
+        "inboundTag": ["dokodemo-in"],
+        "outboundTag": "block"
+      }
+    ]
+  }
 }
 EOF
 
@@ -320,7 +355,7 @@ display_info() {
     get_ip
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 节点 1: XHTTP-Reality (强混淆/抗封锁)${NC}"
-    echo -e " Port: ${PORT_XHTTP} | Flow: 无 "
+    echo -e " Port: ${PORT_XHTTP} | Network: xhttp "
     echo -e " Path: ${UUID}-xh"
     echo -e "----------------------------------------------------"
     
@@ -349,7 +384,7 @@ display_info() {
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e "${CYAN}说明：所有节点均为官方内核标准配置，安全稳定。${NC}"
+    echo -e "${CYAN}安全提示：已启用本地路由防盗机制，严格锁定 ${REALITY_SNI}，防止流量偷跑。${NC}"
 }
 
 # --- 卸载 ---
@@ -367,7 +402,7 @@ uninstall_node() {
 show_menu() {
     clear
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Xray 双协议极简管理 (官方纯净内核)   ${NC}"
+    echo -e "${CYAN}   Xray 双协议极简管理 (官方内核 + 防偷跑)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
     echo -e "1. 安装 / 重置 (双协议)"
     echo -e "2. 查看节点链接"
