@@ -184,7 +184,7 @@ install_node() {
     # [核心修改] 生成随机端口，并确保不冲突
     while true; do
         PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
-        PORT_LO=$(shuf -i 10000-65535 -n 1) # 本地回环端口
+        PORT_LO=10000 # 本地回环端口
         
         # 确保互不相同，且不等于 443
         if [ "$PORT_XHTTP" != "$PORT_VISION" ] && \
