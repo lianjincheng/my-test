@@ -8,11 +8,11 @@
 # =========================================================
 
 # --- 基础配置 ---
-INSTALL_DIR="/root/xray_node"
+INSTALL_DIR="/root/xray_xhttp_node"
 CONFIG_FILE="${INSTALL_DIR}/config.json"
 XRAY_BIN="${INSTALL_DIR}/xray"
-SERVICE_FILE="/etc/systemd/system/xray-node.service"
-INFO_FILE="${INSTALL_DIR}/.xray_node_info"
+SERVICE_FILE="/etc/systemd/system/xray-xhttp.service"
+INFO_FILE="${INSTALL_DIR}/.xray_xhttp_info"
 
 # 默认伪装域名 (防偷跑机制将严格锁定此域名)
 DEFAULT_REALITY_SNI="swdist.apple.com"
@@ -152,10 +152,10 @@ install_node() {
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
     # [核心修改] 生成两个不重复的随机端口
-    # PORT_XHTTP: 公网监听端口 (10000-65535)
+    # PORT_XHTTP: 随机端口 ($(shuf -i 10000-65535 -n 1))
     # PORT_LO: 本地回环端口 (10000-65535)，用于内部转发安检
     while true; do
-        PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
+        PORT_XHTTP=443
         PORT_LO=65535
         if [ "$PORT_XHTTP" != "$PORT_LO" ]; then
             break
