@@ -156,7 +156,7 @@ install_node() {
     # PORT_LO: 本地回环端口 (10000-65535)，用于内部转发安检
     while true; do
         PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
-        PORT_LO=10000
+        PORT_LO=65535
         if [ "$PORT_XHTTP" != "$PORT_VISION" ] && \
            [ "$PORT_XHTTP" != "$PORT_LO" ]; then
             break
