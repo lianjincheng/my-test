@@ -215,26 +215,14 @@ install_node() {
         "port": 443,
         "network": "tcp"
       },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["tls"],
-        "routeOnly": true
-      }
+      "sniffing": { "enabled": true, "destOverride": ["tls"], "routeOnly": true }
     },
     {
-      "tag": "xhttp-reality",
-      "listen": "${LISTEN_ADDR}",
+      "tag": "xhttp-v4",
+      "listen": "${IPV4_ADDR}",
       "port": ${PORT_XHTTP},
       "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${UUID}",
-            "flow": ""
-          }
-        ],
-        "decryption": "none"
-      },
+      "settings": { "clients": [ { "id": "${UUID}", "flow": "" } ], "decryption": "none" },
       "streamSettings": {
         "network": "xhttp",
         "security": "reality",
@@ -245,31 +233,36 @@ install_node() {
           "privateKey": "${PRIVATE_KEY}",
           "shortIds": ["${SHORT_ID}"],"spiderX": "/"
         },
-        "xhttpSettings": {
-          "path": "${UUID}-xh",
-          "mode": "auto"
-        }
+        "xhttpSettings": { "path": "${UUID}-xh", "mode": "auto" }
       },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "metadataOnly": false
-      }
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
     },
     {
-      "tag": "vision-reality",
-      "listen": "${LISTEN_ADDR}",
+      "tag": "xhttp-v6",
+      "listen": "${IPV6_ADDR}",
+      "port": ${PORT_XHTTP},
+      "protocol": "vless",
+      "settings": { "clients": [ { "id": "${UUID}", "flow": "" } ], "decryption": "none" },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "dest": "127.0.0.1:${PORT_LO}",
+          "serverNames": [ "${REALITY_SNI}" ],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
+        },
+        "xhttpSettings": { "path": "${UUID}-xh", "mode": "auto" }
+      },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+    },
+    {
+      "tag": "vision-v4",
+      "listen": "${IPV4_ADDR}",
       "port": ${PORT_VISION},
       "protocol": "vless",
-      "settings": {
-        "clients": [
-          {
-            "id": "${UUID}",
-            "flow": "xtls-rprx-vision"
-          }
-        ],
-        "decryption": "none"
-      },
+      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
       "streamSettings": {
         "network": "tcp",
         "security": "reality",
@@ -281,51 +274,40 @@ install_node() {
           "shortIds": ["${SHORT_ID}"],"spiderX": "/"
         }
       },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "metadataOnly": false
-      }
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+    },
+    {
+      "tag": "vision-v6",
+      "listen": "${IPV6_ADDR}",
+      "port": ${PORT_VISION},
+      "protocol": "vless",
+      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "dest": "127.0.0.1:${PORT_LO}",
+          "serverNames": [ "${REALITY_SNI}" ],
+          "privateKey": "${PRIVATE_KEY}",
+          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
+        }
+      },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
     }
   ],
   "outbounds": [
-    {
-      "tag": "direct-v4",
-      "protocol": "freedom",
-      "settings": { "domainStrategy": "UseIPv4" }
-    },
-    {
-      "tag": "direct-v6",
-      "protocol": "freedom",
-      "settings": { "domainStrategy": "UseIPv6" }
-    },
-    {
-      "tag": "block",
-      "protocol": "blackhole"
-    }
+    { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" } },
+    { "tag": "direct-v6", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv6" } },
+    { "protocol": "blackhole", "tag": "block" }
   ],
   "routing": {
     "domainStrategy": "IPOnDemand",
     "rules": [
-      {
-        "inboundTag": ["dokodemo-in"],
-        "domain": ["${REALITY_SNI}"],
-        "outboundTag": "direct-v4"
-      },
-      {
-        "inboundTag": ["dokodemo-in"],
-        "outboundTag": "block"
-      },
-      {
-        "type": "field",
-        "ip": ["0.0.0.0/0"],
-        "outboundTag": "direct-v4"
-      },
-      {
-        "type": "field",
-        "ip": ["::/0"],
-        "outboundTag": "direct-v6"
-      }
+      { "inboundTag": ["dokodemo-in"], "domain": ["${REALITY_SNI}"], "outboundTag": "direct-v4" },
+      { "inboundTag": ["dokodemo-in"], "outboundTag": "block" },
+      { "inboundTag": ["xhttp-v4", "vision-v4"], "outboundTag": "direct-v4" },
+      { "inboundTag": ["xhttp-v6", "vision-v6"], "outboundTag": "direct-v6" }
     ]
   }
 }
