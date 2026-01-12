@@ -125,6 +125,19 @@ masquerade:
   type: file
   file:
     dir: $FALLBACK_DIR
+outbounds:
+  - name: v4
+    type: direct
+    direct:
+      mode: 4
+  - name: v6
+    type: direct
+    direct:
+      mode: 6
+acl:
+  inline: |
+    v4(0.0.0.0/0)
+    v6(::/0)
 EOF
 }
 
