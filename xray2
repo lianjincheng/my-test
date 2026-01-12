@@ -134,11 +134,24 @@ load_info() {
 
 # --- 获取 IP ---
 get_ip() {
-    IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k)
-    IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k)
-    if [ -z "$IPV4_ADDR" ] && [ -z "$IPV6_ADDR" ]; then
-        IPV4_ADDR="127.0.0.1"
+    # 1. 优先使用 icanhazip (对脚本最友好，很少弹验证码)
+    # 2. 加上 tr -d '\n\r' 强制删除换行符，防止 JSON 报错
+    
+    info "正在获取 IP..."
+    
+    IPV4_ADDR=$(curl -s4m5 https://ipv4.icanhazip.com -k | tr -d '\n\r')
+    if [[ "$IPV4_ADDR" == *"html"* ]] || [ -z "$IPV4_ADDR" ]; then
+        # 如果获取失败或者获取到了 html 代码，使用 ip.sb 重试
+        IPV4_ADDR=$(curl -s4m5 https://ip.sb -k | tr -d '\n\r')
     fi
+
+    IPV6_ADDR=$(curl -s6m5 https://ipv6.icanhazip.com -k | tr -d '\n\r')
+    if [[ "$IPV6_ADDR" == *"html"* ]] || [ -z "$IPV6_ADDR" ]; then
+        IPV6_ADDR=$(curl -s6m5 https://ip.sb -k | tr -d '\n\r')
+    fi
+
+    info "最终确认 IPv4: $IPV4_ADDR"
+    info "最终确认 IPv6: $IPV6_ADDR"
 }
 
 # --- 安装核心逻辑 ---
