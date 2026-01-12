@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-#  Xray 双协议管理脚本 (官方内核 + 443端口 + 防偷跑版)
-#  Target Core: XTLS/Xray-core Official (Latest)
-#  Protocol 1: VLESS + XHTTP + REALITY (强混淆/防封)
-#  Protocol 2: VLESS + TCP + VISION + REALITY (高性能/低延迟)
-#  Security: 本地回环 + 路由白名单 (彻底防止 SNI 偷跑流量)
+#  Xray 双协议管理脚本 (V5 终极重构版)
+#  UI: 恢复原版经典界面
+#  Fix: 彻底修复 JSON 语法错误 (采用预组装模式)
+#  Feature: 入口即出口 (严格分流) + 防偷跑 + 大流量伪装
+#  SNI: www.icloud.com | Port: 65535 (Local)
 # =========================================================
 
 # --- 基础配置 ---
@@ -15,7 +15,7 @@ XRAY_BIN="${INSTALL_DIR}/xray"
 SERVICE_FILE="/etc/systemd/system/xray-dual.service"
 INFO_FILE="${INSTALL_DIR}/.xray_dual_info"
 
-# 默认伪装域名 (防偷跑机制将严格锁定此域名)
+# 默认伪装域名
 DEFAULT_REALITY_SNI="www.icloud.com"
 
 # --- 颜色定义 ---
@@ -27,11 +27,11 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 全局变量 ---
+# --- 变量初始化 ---
 UUID=""
-PORT_XHTTP=""   # XHTTP 协议端口
-PORT_VISION="443"  # Vision 协议端口 (固定)
-PORT_LO=""      # [新增] 本地回环防盗端口
+PORT_XHTTP=""
+PORT_VISION="443"
+PORT_LO="65535"
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
@@ -45,70 +45,42 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
-# --- 检查 Root ---
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        error "必须使用 root 权限运行此脚本。"
-        exit 1
-    fi
-}
+check_root() { if [[ $EUID -ne 0 ]]; then error "请使用 root 权限"; exit 1; fi; }
 
-# --- 强力清理旧进程 ---
 force_cleanup() {
-    # 先停止当前服务，释放端口
-    systemctl stop xray-vision >/dev/null 2>&1
-    systemctl disable xray-vision >/dev/null 2>&1
-    # 清理其他旧服务，防止端口冲突
-    systemctl stop xray-xhttp >/dev/null 2>&1
-    systemctl disable xray-xhttp >/dev/null 2>&1
     systemctl stop xray-dual >/dev/null 2>&1
     systemctl disable xray-dual >/dev/null 2>&1
-
-    local pid=$(pgrep -f "${XRAY_BIN}")
-    if [ -n "$pid" ]; then
-        kill -9 $pid >/dev/null 2>&1
-    fi
+    # 清理旧服务名防止冲突
+    systemctl stop xray-vision >/dev/null 2>&1
+    systemctl disable xray-vision >/dev/null 2>&1
+    systemctl stop xray-xhttp >/dev/null 2>&1
+    systemctl disable xray-xhttp >/dev/null 2>&1
     
-    rm -rf "${INSTALL_DIR}" "/root/xray_enc_node" "/root/xray_xhttp_node"
+    local pid=$(pgrep -f "${XRAY_BIN}")
+    if [ -n "$pid" ]; then kill -9 $pid >/dev/null 2>&1; fi
+    rm -rf "${INSTALL_DIR}"
 }
 
-# --- 检查/安装依赖 ---
 check_dependencies() {
-    # 新增 net-tools 依赖，确保 netstat 命令可用
     local deps=("curl" "wget" "tar" "jq" "openssl" "unzip" "net-tools")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
-            info "正在安装依赖: $dep ..."
-            if command -v apt-get &>/dev/null; then
-                apt-get update -y && apt-get install -y "$dep"
-            elif command -v yum &>/dev/null; then
-                yum install -y "$dep"
-            else
-                warn "无法自动安装 $dep，请手动安装。"
-            fi
+            info "安装依赖: $dep"
+            if command -v apt-get &>/dev/null; then apt-get update -y && apt-get install -y "$dep"
+            elif command -v yum &>/dev/null; then yum install -y "$dep"; fi
         fi
     done
 }
 
-# --- 443 端口占用检测 ---
 check_port_443() {
-    info "正在检测 443 端口环境..."
-    
-    # 使用 netstat 检测 :443 端口
     if netstat -tlunp | grep -w ":443" > /dev/null 2>&1; then
-        error "严重错误：检测到 443 端口正在被其他程序占用！"
-        echo -e "${YELLOW}↓↓↓ 占用详情 (netstat) ↓↓↓${NC}"
+        error "443 端口被占用！请先停止 Nginx/Apache。"
+        echo -e "${YELLOW}占用详情:${NC}"
         netstat -tlunp | grep -w ":443"
-        echo -e "${YELLOW}↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑${NC}"
-        echo -e "${RED}Xray 无法启动。请先停止或卸载占用 443 端口的软件 (如 Nginx/Apache/Caddy/Docker) 后重试。${NC}"
-        echo -e "${RED}脚本已停止运行。${NC}"
         exit 1
-    else
-        info "端口检测通过：443 端口空闲，可以继续安装。"
     fi
 }
 
-# --- 保存配置信息 ---
 save_info() {
     mkdir -p "${INSTALL_DIR}"
     cat > "$INFO_FILE" <<EOF
@@ -119,195 +91,179 @@ PRIVATE_KEY="${PRIVATE_KEY}"
 PUBLIC_KEY="${PUBLIC_KEY}"
 SHORT_ID="${SHORT_ID}"
 REALITY_SNI="${REALITY_SNI}"
+IPV4_ADDR="${IPV4_ADDR}"
+IPV6_ADDR="${IPV6_ADDR}"
 EOF
 }
 
-# --- 加载配置信息 ---
 load_info() {
-    if [ -f "$INFO_FILE" ]; then
-        source "$INFO_FILE"
-        return 0
-    else
-        return 1
-    fi
+    if [ -f "$INFO_FILE" ]; then source "$INFO_FILE"; return 0; else return 1; fi
 }
 
-# --- 获取 IP ---
+# --- 稳健的 IP 获取 ---
 get_ip() {
-    # 1. 优先使用 icanhazip (对脚本最友好，很少弹验证码)
-    # 2. 加上 tr -d '\n\r' 强制删除换行符，防止 JSON 报错
-    
-    info "正在获取 IP..."
-    
-    IPV4_ADDR=$(curl -s4m5 https://ipv4.icanhazip.com -k | tr -d '\n\r')
-    if [[ "$IPV4_ADDR" == *"html"* ]] || [ -z "$IPV4_ADDR" ]; then
-        # 如果获取失败或者获取到了 html 代码，使用 ip.sb 重试
-        IPV4_ADDR=$(curl -s4m5 https://ip.sb -k | tr -d '\n\r')
-    fi
+    # 使用 icanhazip 获取纯文本 IP，并过滤掉所有非 IP 字符
+    IPV4_ADDR=$(curl -s4m5 https://ipv4.icanhazip.com -k | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1)
+    IPV6_ADDR=$(curl -s6m5 https://ipv6.icanhazip.com -k | grep -Eo '([a-f0-9:]+:+)+[a-f0-9]+' | head -n1)
 
-    IPV6_ADDR=$(curl -s6m5 https://ipv6.icanhazip.com -k | tr -d '\n\r')
-    if [[ "$IPV6_ADDR" == *"html"* ]] || [ -z "$IPV6_ADDR" ]; then
-        IPV6_ADDR=$(curl -s6m5 https://ip.sb -k | tr -d '\n\r')
-    fi
-
-    info "最终确认 IPv4: $IPV4_ADDR"
-    info "最终确认 IPv6: $IPV6_ADDR"
+    info "IPv4: $IPV4_ADDR"
+    info "IPv6: $IPV6_ADDR"
 }
 
-# --- 安装核心逻辑 ---
+# --- 核心：安装逻辑 ---
 install_node() {
-    force_cleanup      # 1. 先清理旧进程 (释放端口)
-    check_dependencies # 2. 安装依赖 (含 netstat)
-    check_port_443     # 3. 检查端口 (如果有残留占用则报错退出)
-    
+    force_cleanup
+    check_dependencies
+    check_port_443
     mkdir -p "$INSTALL_DIR"
     
-    info "正在检测架构并下载 Xray 官方最新内核..."
+    info "下载 Xray 官方内核..."
     local ARCH=$(uname -m)
     local DOWNLOAD_URL=""
-    
     case "$ARCH" in
         aarch64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-arm64-v8a.zip" ;;
         x86_64) DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" ;;
         *) error "不支持的架构: $ARCH"; exit 1 ;;
     esac
 
-    local ZIP_FILE="${INSTALL_DIR}/xray.zip"
-    wget -O "$ZIP_FILE" "$DOWNLOAD_URL" --tries=3
-    
-    if [ ! -f "$ZIP_FILE" ]; then
-        error "核心下载失败！"
-        exit 1
-    fi
-
-    unzip -o "$ZIP_FILE" -d "$INSTALL_DIR" >/dev/null 2>&1
-    rm -f "$ZIP_FILE"
+    wget -O "${INSTALL_DIR}/xray.zip" "$DOWNLOAD_URL" --tries=3
+    unzip -o "${INSTALL_DIR}/xray.zip" -d "$INSTALL_DIR" >/dev/null 2>&1
     chmod +x "$XRAY_BIN"
 
-    info "正在生成配置..."
-    UUID=$("$XRAY_BIN" uuid)
-    local KEY_PAIR=$("$XRAY_BIN" x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}')
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}')
-    SHORT_ID=$(openssl rand -hex 4)
-    REALITY_SNI="$DEFAULT_REALITY_SNI"
-
-    # [核心修改] 生成随机端口，并确保不冲突
-    while true; do
-        PORT_XHTTP=$(shuf -i 10000-65535 -n 1)
-        PORT_LO=65535 # 本地回环端口
-        
-        # 确保互不相同，且不等于 443
-        if [ "$PORT_XHTTP" != "$PORT_VISION" ] && \
-           [ "$PORT_LO" != "$PORT_XHTTP" ] && \
-           [ "$PORT_LO" != "$PORT_VISION" ]; then
-            break
-        fi
-    done
-
-    local LISTEN_ADDR="::"
-    if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
-        LISTEN_ADDR="0.0.0.0"
-    elif [ ! -f /proc/net/if_inet6 ]; then
-        LISTEN_ADDR="0.0.0.0"
+    get_ip
+    
+    info "生成配置参数..."
+    # 使用内核命令生成 UUID，绝对纯净
+    if [ -f /proc/sys/kernel/random/uuid ]; then
+        UUID=$(cat /proc/sys/kernel/random/uuid | tr -d '\n\r')
+    else
+        UUID=$("$XRAY_BIN" uuid)
     fi
 
-    # --- 写入双入站配置 (含本地回环防盗) ---
+    local KEY_PAIR=$("$XRAY_BIN" x25519)
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}' | tr -d '\n\r')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}' | tr -d '\n\r')
+    SHORT_ID=$(openssl rand -hex 4 | tr -d '\n\r')
+    REALITY_SNI="$DEFAULT_REALITY_SNI"
+
+    while true; do
+        PORT_XHTTP=$(shuf -i 10000-65534 -n 1)
+        if [ "$PORT_XHTTP" != "443" ]; then break; fi
+    done
+
+    # ==========================================
+    #  配置组装区 (解决 JSON 逗号问题的核心)
+    # ==========================================
+    
+    # 1. Dokodemo (本地回环) - 始终存在
+    local INBOUND_DOKODEMO='{
+      "tag": "dokodemo-in",
+      "listen": "127.0.0.1",
+      "port": '$PORT_LO',
+      "protocol": "dokodemo-door",
+      "settings": { "address": "'$REALITY_SNI'", "port": 443, "network": "tcp" },
+      "sniffing": { "enabled": true, "destOverride": ["tls"], "routeOnly": true }
+    }'
+
+    # 2. IPv4 配置块
+    local INBOUND_V4=""
+    if [ -n "$IPV4_ADDR" ]; then
+        INBOUND_V4=',{
+            "tag": "xhttp-v4",
+            "listen": "'$IPV4_ADDR'",
+            "port": '$PORT_XHTTP',
+            "protocol": "vless",
+            "settings": { "clients": [ { "id": "'$UUID'", "flow": "" } ], "decryption": "none" },
+            "streamSettings": {
+                "network": "xhttp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "dest": "127.0.0.1:'$PORT_LO'",
+                    "serverNames": [ "'$REALITY_SNI'" ],
+                    "privateKey": "'$PRIVATE_KEY'",
+                    "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
+                },
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "auto" }
+            },
+            "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+        },
+        {
+            "tag": "vision-v4",
+            "listen": "'$IPV4_ADDR'",
+            "port": '$PORT_VISION',
+            "protocol": "vless",
+            "settings": { "clients": [ { "id": "'$UUID'", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "dest": "127.0.0.1:'$PORT_LO'",
+                    "serverNames": [ "'$REALITY_SNI'" ],
+                    "privateKey": "'$PRIVATE_KEY'",
+                    "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
+                }
+            },
+            "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+        }'
+    fi
+
+    # 3. IPv6 配置块
+    local INBOUND_V6=""
+    if [ -n "$IPV6_ADDR" ]; then
+        INBOUND_V6=',{
+            "tag": "xhttp-v6",
+            "listen": "'$IPV6_ADDR'",
+            "port": '$PORT_XHTTP',
+            "protocol": "vless",
+            "settings": { "clients": [ { "id": "'$UUID'", "flow": "" } ], "decryption": "none" },
+            "streamSettings": {
+                "network": "xhttp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "dest": "127.0.0.1:'$PORT_LO'",
+                    "serverNames": [ "'$REALITY_SNI'" ],
+                    "privateKey": "'$PRIVATE_KEY'",
+                    "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
+                },
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "auto" }
+            },
+            "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+        },
+        {
+            "tag": "vision-v6",
+            "listen": "'$IPV6_ADDR'",
+            "port": '$PORT_VISION',
+            "protocol": "vless",
+            "settings": { "clients": [ { "id": "'$UUID'", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "dest": "127.0.0.1:'$PORT_LO'",
+                    "serverNames": [ "'$REALITY_SNI'" ],
+                    "privateKey": "'$PRIVATE_KEY'",
+                    "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
+                }
+            },
+            "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
+        }'
+    fi
+
+    # --- 最终写入 config.json ---
+    # 利用变量拼接，避免了 cat EOF 的语法陷阱
+    
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "error" },
   "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
   "inbounds": [
-    {
-      "tag": "dokodemo-in",
-      "listen": "127.0.0.1",
-      "port": ${PORT_LO},
-      "protocol": "dokodemo-door",
-      "settings": {
-        "address": "${REALITY_SNI}",
-        "port": 443,
-        "network": "tcp"
-      },
-      "sniffing": { "enabled": true, "destOverride": ["tls"], "routeOnly": true }
-    },
-    {
-      "tag": "xhttp-v4",
-      "listen": "${IPV4_ADDR}",
-      "port": ${PORT_XHTTP},
-      "protocol": "vless",
-      "settings": { "clients": [ { "id": "${UUID}", "flow": "" } ], "decryption": "none" },
-      "streamSettings": {
-        "network": "xhttp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "chrome",
-          "dest": "127.0.0.1:${PORT_LO}",
-          "serverNames": [ "${REALITY_SNI}" ],
-          "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
-        },
-        "xhttpSettings": { "path": "${UUID}-xh", "mode": "auto" }
-      },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
-    },
-    {
-      "tag": "xhttp-v6",
-      "listen": "${IPV6_ADDR}",
-      "port": ${PORT_XHTTP},
-      "protocol": "vless",
-      "settings": { "clients": [ { "id": "${UUID}", "flow": "" } ], "decryption": "none" },
-      "streamSettings": {
-        "network": "xhttp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "chrome",
-          "dest": "127.0.0.1:${PORT_LO}",
-          "serverNames": [ "${REALITY_SNI}" ],
-          "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
-        },
-        "xhttpSettings": { "path": "${UUID}-xh", "mode": "auto" }
-      },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
-    },
-    {
-      "tag": "vision-v4",
-      "listen": "${IPV4_ADDR}",
-      "port": ${PORT_VISION},
-      "protocol": "vless",
-      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "chrome",
-          "dest": "127.0.0.1:${PORT_LO}",
-          "serverNames": [ "${REALITY_SNI}" ],
-          "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
-        }
-      },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
-    },
-    {
-      "tag": "vision-v6",
-      "listen": "${IPV6_ADDR}",
-      "port": ${PORT_VISION},
-      "protocol": "vless",
-      "settings": { "clients": [ { "id": "${UUID}", "flow": "xtls-rprx-vision" } ], "decryption": "none" },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "chrome",
-          "dest": "127.0.0.1:${PORT_LO}",
-          "serverNames": [ "${REALITY_SNI}" ],
-          "privateKey": "${PRIVATE_KEY}",
-          "shortIds": ["${SHORT_ID}"],"spiderX": "/"
-        }
-      },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
-    }
+    $INBOUND_DOKODEMO
+    $INBOUND_V4
+    $INBOUND_V6
   ],
   "outbounds": [
     { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" } },
@@ -317,7 +273,7 @@ install_node() {
   "routing": {
     "domainStrategy": "IPOnDemand",
     "rules": [
-      { "inboundTag": ["dokodemo-in"], "domain": ["${REALITY_SNI}"], "outboundTag": "direct-v4" },
+      { "inboundTag": ["dokodemo-in"], "domain": ["$REALITY_SNI"], "outboundTag": "direct-v4" },
       { "inboundTag": ["dokodemo-in"], "outboundTag": "block" },
       { "inboundTag": ["xhttp-v4", "vision-v4"], "outboundTag": "direct-v4" },
       { "inboundTag": ["xhttp-v6", "vision-v6"], "outboundTag": "direct-v6" }
@@ -328,15 +284,15 @@ EOF
 
     # 验证
     if ! "$XRAY_BIN" run -test -c "$CONFIG_FILE" >/dev/null 2>&1; then
-        error "配置文件校验失败！"
+        error "配置文件依然有误，请手动检查 config.json"
         "$XRAY_BIN" run -test -c "$CONFIG_FILE"
         exit 1
     fi
 
-    info "配置系统服务..."
+    # 配置 Systemd
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Xray Dual Protocol Service
+Description=Xray Dual Service
 After=network.target
 [Service]
 Type=simple
@@ -357,10 +313,10 @@ EOF
     
     sleep 2
     if systemctl is-active --quiet xray-dual; then
-        success "安装成功！双协议节点已就绪。"
+        success "安装成功！双栈严格分流模式已生效。"
         display_info
     else
-        error "服务启动失败！可能是 443 端口被其他非系统进程占用。"
+        error "服务启动失败！"
         journalctl -u xray-dual --no-pager -n 10
     fi
 }
@@ -368,59 +324,41 @@ EOF
 # --- 显示信息 ---
 display_info() {
     load_info
-    get_ip
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e "${GREEN} 节点 1: XHTTP-Reality (强混淆/抗封锁)${NC}"
-    echo -e " Port: ${PORT_XHTTP} | Network: xhttp "
-    echo -e " Path: ${UUID}-xh"
-    echo -e "----------------------------------------------------"
-    
-    local PARAMS_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
-    local LINK_BASE="vless://${UUID}@"
+    echo -e "${GREEN} 节点 1: XHTTP-Reality (伪装: ${REALITY_SNI})${NC}"
+    echo -e " Port: ${PORT_XHTTP} | Path: ${UUID}-xh "
+    local P_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
     
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS_XH}#XHTTP-IPv4${NC}"
+        echo -e "${YELLOW}vless://${UUID}@${IPV4_ADDR}${P_XH}#XHTTP-IPv4${NC}"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS_XH}#XHTTP-IPv6${NC}"
+        echo -e "${YELLOW}vless://${UUID}@[${IPV6_ADDR}]${P_XH}#XHTTP-IPv6${NC}"
     fi
     echo
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e "${GREEN} 节点 2: TCP-Vision-Reality (高性能/低延迟)${NC}"
+    echo -e "${GREEN} 节点 2: Vision-Reality (伪装: ${REALITY_SNI})${NC}"
     echo -e " Port: ${PORT_VISION} | Flow: xtls-rprx-vision "
-    echo -e "----------------------------------------------------"
-
-    local PARAMS_VS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
+    local P_VS=":${PORT_VISION}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none"
 
     if [ -n "$IPV4_ADDR" ]; then
-        echo -e "${YELLOW}${LINK_BASE}${IPV4_ADDR}${PARAMS_VS}#Vision-IPv4${NC}"
+        echo -e "${YELLOW}vless://${UUID}@${IPV4_ADDR}${P_VS}#Vision-IPv4${NC}"
     fi
     if [ -n "$IPV6_ADDR" ]; then
-        echo -e "${YELLOW}${LINK_BASE}[${IPV6_ADDR}]${PARAMS_VS}#Vision-IPv6${NC}"
+        echo -e "${YELLOW}vless://${UUID}@[${IPV6_ADDR}]${P_VS}#Vision-IPv6${NC}"
     fi
 
     echo -e "${MAGENTA}====================================================${NC}"
-    echo -e "${CYAN}安全提示：已启用本地路由防盗机制，严格锁定 ${REALITY_SNI}，防止流量偷跑。${NC}"
-}
-
-# --- 卸载 ---
-uninstall_node() {
-    read -p "确定要卸载吗? (y/N): " choice
-    if [[ "$choice" =~ ^[Yy]$ ]]; then
-        force_cleanup
-        rm -f "$SERVICE_FILE"
-        systemctl daemon-reload
-        success "卸载完成。"
-    fi
+    echo -e "${CYAN}提示：客户端连接 IPv4 地址 -> 强制走 IPv4 出口；连接 IPv6 地址 -> 强制走 IPv6 出口。${NC}"
 }
 
 # --- 菜单 ---
 show_menu() {
     clear
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Xray 双协议极简管理 (官方内核 + 防偷跑)   ${NC}"
+    echo -e "${CYAN}   Xray 双协议极简管理 (V5 终极修复版)   ${NC}"
     echo -e "${MAGENTA}================================================${NC}"
-    echo -e "1. 安装 / 重置 (双协议)"
+    echo -e "1. 安装 / 重置 (双协议 + 分流)"
     echo -e "2. 查看节点链接"
     echo -e "3. 重启服务"
     echo -e "4. 卸载"
@@ -431,7 +369,7 @@ show_menu() {
         1) install_node ;;
         2) display_info ;;
         3) systemctl restart xray-dual && success "已重启" ;;
-        4) uninstall_node ;;
+        4) force_cleanup; rm -f "$SERVICE_FILE"; success "已卸载" ;;
         0) exit 0 ;;
         *) echo "无效" ;;
     esac
