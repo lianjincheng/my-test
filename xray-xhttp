@@ -230,19 +230,39 @@ install_node() {
     }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct", "settings": { "domainStrategy": "UseIP" } },
+    {
+      "tag": "direct-v4",
+      "protocol": "freedom",
+      "settings": { "domainStrategy": "UseIPv4" }
+    },
+    {
+      "tag": "direct-v6",
+      "protocol": "freedom",
+      "settings": { "domainStrategy": "UseIPv6" }
+    },
     { "protocol": "blackhole", "tag": "block" }
   ],
   "routing": {
+    "domainStrategy": "IPOnDemand",
     "rules": [
       {
         "inboundTag": ["dokodemo-in"],
         "domain": ["${REALITY_SNI}"],
-        "outboundTag": "direct"
+        "outboundTag": "direct-v4"
       },
       {
         "inboundTag": ["dokodemo-in"],
         "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "ip": ["0.0.0.0/0"],
+        "outboundTag": "direct-v4"
+      },
+      {
+        "type": "field",
+        "ip": ["::/0"],
+        "outboundTag": "direct-v6"
       }
     ]
   }
