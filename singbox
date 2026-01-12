@@ -308,6 +308,7 @@ create_config_json() {
         DEFAULT_DNS_TAG="dns-remote-v6"
     fi
 
+    # --- 1. 写入头部、DNS ---
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
 {
   "log": { "level": "info", "timestamp": true },
@@ -319,6 +320,7 @@ create_config_json() {
   },
 EOF
 
+    # --- 2. 写入 Endpoints (WARP) ---
     if [ "$HAS_WARP" = true ]; then
         cat >> "$SINGBOX_CONFIG_FILE" <<EOF
   "endpoints": [
@@ -341,6 +343,7 @@ EOF
 EOF
     fi
 
+    # --- 3. 写入 Inbounds (入站) ---
     cat >> "$SINGBOX_CONFIG_FILE" <<EOF
   "inbounds": [
     {
@@ -360,22 +363,44 @@ EOF
       "transport": { "type": "ws", "path": "${ARGO_PATH}","max_early_data": 2048,"early_data_header_name": "Sec-WebSocket-Protocol" }
     }
   ],
+EOF
+
+    # --- 4. 写入 Outbounds (出站 - 拆分v4/v6) ---
+    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
   "outbounds": [
-    { "type": "direct", "tag": "direct" }
+    {
+      "type": "direct",
+      "tag": "direct-v4"
+    },
+    {
+      "type": "direct",
+      "tag": "direct-v6"
+    }
   ],
+EOF
+
+    # --- 5. 写入 Route (路由 - 核心分流逻辑) ---
+    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
   "route": {
     "rules": [
       { "action": "sniff" },
       { "protocol": "dns", "action": "hijack-dns" },
-      { "inbound": "vless-argo", "outbound": "direct" },
 EOF
+
+    # [逻辑判断] 如果有 WARP，Hy2 强制走 WARP
+    # 注意：这里加了逗号，因为下面还有规则
     if [ "$HAS_WARP" = true ]; then
-        echo '      { "inbound": "hy2-smart", "outbound": "warp-out" }' >> "$SINGBOX_CONFIG_FILE"
-    else
-        echo '      { "inbound": "hy2-smart", "outbound": "direct" }' >> "$SINGBOX_CONFIG_FILE"
+        echo '      { "inbound": "hy2-smart", "outbound": "warp-out" },' >> "$SINGBOX_CONFIG_FILE"
     fi
     
+    # [兜底规则]
+    # 1. vless-argo 会落到这里
+    # 2. 如果没有WARP，hy2 也会落到这里
+    # 3. 系统 DNS 请求也会落到这里
+    # 效果：IPv4 走 direct-v4，IPv6 走 direct-v6，绝不乱跳
     cat >> "$SINGBOX_CONFIG_FILE" <<EOF
+      { "ip_version": 4, "outbound": "direct-v4" },
+      { "ip_version": 6, "outbound": "direct-v6" }
     ],
     "default_domain_resolver": "${DEFAULT_DNS_TAG}"
   }
