@@ -315,7 +315,8 @@ create_config_json() {
     "servers": [
       { "tag": "dns-remote", "type": "udp", "server": "1.1.1.1" },
       { "tag": "dns-remote-v6","type": "udp", "server": "2606:4700:4700::1111" }
-    ]
+    ],
+    "strategy": "ipv4_only"
   },
 EOF
 
