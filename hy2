@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # =========================================================
-#  Hysteria 2 官方内核管理脚本 (Pro V9 - 终极安全版)
-#  Update: 
-#    1. 默认采用 File 模式伪装 (返回仿真 Nginx 404)
-#    2. 彻底移除 Proxy 转发，防止被偷跑流量或消耗资源
-#    3. 自动生成防探测的静态页面
+#  Hysteria 2 双进程物理隔离版 (Pro V20 - Reborn)
+#  基于 hy2.txt 重构，严格遵循用户指定的 ACL 写法
+#  特性:
+#    1. IPv4 进程: 监听 v4 IP -> mode: 4 -> v4(all)
+#    2. IPv6 进程: 监听 v6 IP -> mode: 6 -> v6(all)
+#    3. 修复: 增加 IP 正则清洗，防止 HTML 代码注入配置文件
 # =========================================================
 
 # --- 颜色定义 ---
@@ -16,15 +17,17 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- 核心路径配置 ---
+# --- 核心路径 ---
 BIN_PATH="/usr/local/bin/hysteria"
 CONFIG_DIR="/etc/hysteria"
-CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+CONFIG_V4="${CONFIG_DIR}/config_v4.yaml"
+CONFIG_V6="${CONFIG_DIR}/config_v6.yaml"
 CERT_FILE="${CONFIG_DIR}/server.crt"
 KEY_FILE="${CONFIG_DIR}/server.key"
-# 新增：伪装文件目录
 FALLBACK_DIR="${CONFIG_DIR}/fallback"
-SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
+
+SERVICE_V4="/etc/systemd/system/hysteria-v4.service"
+SERVICE_V6="/etc/systemd/system/hysteria-v6.service"
 
 # --- 辅助函数 ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -34,17 +37,24 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 check_root() { if [ "$(id -u)" -ne 0 ]; then error "请使用 root 权限运行此脚本"; exit 1; fi; }
 
-# --- 1. 环境清理与检查 ---
+# --- 1. 环境清理 ---
 cleanup_environment() {
-    local mode=$1; info "正在清理旧的 Hysteria 2 环境..."
-    if systemctl list-units --full -all | grep -q "hysteria-server.service"; then
-        systemctl stop hysteria-server; systemctl disable hysteria-server >/dev/null 2>&1
+    local mode=$1
+    if [ "$mode" == "uninstall" ]; then info "正在清理环境..."; fi
+    
+    # 停止旧服务
+    systemctl stop hysteria-server hysteria-v4 hysteria-v6 >/dev/null 2>&1
+    systemctl disable hysteria-server hysteria-v4 hysteria-v6 >/dev/null 2>&1
+    rm -f /etc/systemd/system/hysteria-server.service "$SERVICE_V4" "$SERVICE_V6"
+    systemctl daemon-reload
+
+    if [ "$mode" == "uninstall" ]; then
+        rm -f "$BIN_PATH"
+        rm -rf "$CONFIG_DIR"
+        if id "hysteria" &>/dev/null; then userdel "hysteria" >/dev/null 2>&1; fi
+        success "Hysteria 2 已彻底卸载。"
+        exit 0
     fi
-    rm -f "$SERVICE_FILE"; systemctl daemon-reload
-    [ -f "$BIN_PATH" ] && rm -f "$BIN_PATH" && info "已删除二进制文件"
-    [ -d "$CONFIG_DIR" ] && rm -rf "$CONFIG_DIR" && info "已删除配置目录"
-    if id "hysteria" &>/dev/null; then userdel "hysteria" >/dev/null 2>&1; fi
-    if [ "$mode" == "uninstall" ]; then success "Hysteria 2 已彻底卸载。"; fi
 }
 
 # --- 2. 依赖安装 ---
@@ -58,45 +68,66 @@ install_dependencies() {
     done
 }
 
-# --- 3. 获取最新内核 ---
+# --- 3. 获取内核 (沿用 hy2.txt 逻辑) ---
 install_kernel() {
+    if [ -f "$BIN_PATH" ]; then info "内核已存在，跳过下载"; return; fi
     info "下载 Hysteria 2 官方内核..."; local ARCH=$(uname -m)
     case "$ARCH" in x86_64) ARCH="amd64" ;; aarch64) ARCH="arm64" ;; *) error "不支持的架构: $ARCH"; exit 1 ;; esac
+    
     local LATEST_VER=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ -z "$LATEST_VER" ]; then error "获取版本失败"; exit 1; fi; info "最新版本: $LATEST_VER"
+    if [ -z "$LATEST_VER" ]; then LATEST_VER="v2.2.4"; fi # 保底
+    info "版本: $LATEST_VER"
+    
     local URL="https://github.com/apernet/hysteria/releases/download/${LATEST_VER}/hysteria-linux-${ARCH}"
     curl -L -o "$BIN_PATH" "$URL" --retry 3
+    
     if [ ! -f "$BIN_PATH" ]; then error "下载失败！"; exit 1; fi; chmod +x "$BIN_PATH"; success "内核安装完成。"
 }
 
-# --- 4. 证书生成 ---
+# --- 4. 证书与伪装 ---
 generate_cert() {
-    info "生成自签名证书 (CN=cdn.jsdelivr.net)..."; mkdir -p "$CONFIG_DIR"
-    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "$KEY_FILE" -out "$CERT_FILE" -days 36500 -subj "/CN=cdn.jsdelivr.net" 2>/dev/null
-    chmod 644 "$CERT_FILE"; chmod 600 "$KEY_FILE"
+    mkdir -p "$CONFIG_DIR" "$FALLBACK_DIR"
+    
+    # 伪装文件 (hy2.txt 原版逻辑)
+    if [ ! -f "$FALLBACK_DIR/index.html" ]; then
+        info "生成防探测伪装页面..."
+        cat > "$FALLBACK_DIR/index.html" <<EOF
+<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr><center>nginx</center></body></html>
+EOF
+    fi
+
+    # 证书
+    if [ ! -f "$CERT_FILE" ]; then
+        info "生成自签名证书 (CN=cdn.jsdelivr.net)..."
+        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "$KEY_FILE" -out "$CERT_FILE" -days 36500 -subj "/CN=cdn.jsdelivr.net" 2>/dev/null
+        chmod 644 "$CERT_FILE"; chmod 600 "$KEY_FILE"
+    fi
 }
 
-# --- 5. 生成配置文件 (核心修改：安全伪装) ---
+# --- 5. 生成配置文件 (核心：严格照搬你的要求) ---
 create_config() {
-    PORT=$(shuf -i 10000-65535 -n 1)
-    AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
+    info "正在获取并校验 IP 地址..."
     
-    # [新增] 创建仿真的 Nginx 404 页面
-    info "正在生成防探测伪装页面..."
-    mkdir -p "$FALLBACK_DIR"
-    cat > "$FALLBACK_DIR/index.html" <<EOF
-<html>
-<head><title>404 Not Found</title></head>
-<body>
-<center><h1>404 Not Found</h1></center>
-<hr><center>nginx</center>
-</body>
-</html>
-EOF
+    # [修复] 增加 grep -Eo 正则过滤，防止 ip.sb 返回 HTML 乱码导致 YAML 报错
+    IPV4=$(curl -s4m5 https://ip.sb -k | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1)
+    if [ -z "$IPV4" ]; then IPV4=$(curl -s4m5 https://ifconfig.me -k | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1); fi
 
-    info "正在生成安全配置文件 (File Mode)..."
-    cat > "$CONFIG_FILE" <<EOF
-listen: :$PORT
+    IPV6=$(curl -s6m5 https://ip.sb -k | grep -Eo '([a-f0-9:]+:+)+[a-f0-9]+' | head -n1)
+    if [ -z "$IPV6" ]; then IPV6=$(curl -s6m5 https://ifconfig.me -k | grep -Eo '([a-f0-9:]+:+)+[a-f0-9]+' | head -n1); fi
+
+    if [ -z "$IPV4" ] && [ -z "$IPV6" ]; then error "无法获取公网 IP"; exit 1; fi
+
+    echo -e "  IPv4: ${GREEN}${IPV4:-无}${NC}"
+    echo -e "  IPv6: ${GREEN}${IPV6:-无}${NC}"
+
+    PORT=$(shuf -i 20000-50000 -n 1)
+    AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
+
+    # === IPv4 配置 (严格按照你的要求) ===
+    if [ -n "$IPV4" ]; then
+        info "生成 IPv4 配置..."
+cat > "$CONFIG_V4" <<EOF
+listen: "$IPV4:$PORT"
 tls:
   cert: $CERT_FILE
   key: $KEY_FILE
@@ -134,94 +165,183 @@ acl:
   inline: |
     v4(all)
 EOF
+    fi
+
+    # === IPv6 配置 (严格按照你的要求) ===
+    if [ -n "$IPV6" ]; then
+        info "生成 IPv6 配置..."
+cat > "$CONFIG_V6" <<EOF
+listen: "[$IPV6]:$PORT"
+tls:
+  cert: $CERT_FILE
+  key: $KEY_FILE
+auth:
+  type: password
+  password: $AUTH_PASS
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 30s
+  disablePathMTUDiscovery: false
+ignoreClientBandwidth: true
+resolver:
+  type: udp
+  udp:
+    addr: 1.1.1.1:53
+    timeout: 4s
+sniff:
+  enable: true
+  rewriteDomain: false
+  tcpPorts: 80,443,8000-9000
+  udpPorts: all
+masquerade:
+  type: file
+  file:
+    dir: $FALLBACK_DIR
+outbounds:
+  - name: v6
+    type: direct
+    direct:
+      mode: 6
+acl:
+  inline: |
+    v6(all)
+EOF
+    fi
 }
 
-# --- 6. 检查与启动 ---
+# --- 6. 启动双服务 ---
 start_service() {
-    info "配置 Systemd 服务 (Root运行)..."
-    cat > "$SERVICE_FILE" <<EOF
+    info "配置 Systemd 服务..."
+    
+    # V4 Service
+    if [ -f "$CONFIG_V4" ]; then
+        cat > "$SERVICE_V4" <<EOF
 [Unit]
-Description=Hysteria Server Service (Official)
+Description=Hysteria V4 Service
 After=network.target
 [Service]
 Type=simple
-ExecStart=$BIN_PATH server --config $CONFIG_FILE
-WorkingDirectory=/etc/hysteria
-Environment=HYSTERIA_LOG_LEVEL=error
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-NoNewPrivileges=true
-Restart=on-failure
-RestartSec=5s
+ExecStart=$BIN_PATH server --config $CONFIG_V4
+WorkingDirectory=$CONFIG_DIR
+Restart=always
+RestartSec=3
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload; systemctl enable hysteria-server >/dev/null 2>&1; systemctl restart hysteria-server
+        systemctl enable hysteria-v4 >/dev/null 2>&1
+        systemctl restart hysteria-v4
+    fi
+
+    # V6 Service
+    if [ -f "$CONFIG_V6" ]; then
+        cat > "$SERVICE_V6" <<EOF
+[Unit]
+Description=Hysteria V6 Service
+After=network.target
+[Service]
+Type=simple
+ExecStart=$BIN_PATH server --config $CONFIG_V6
+WorkingDirectory=$CONFIG_DIR
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl enable hysteria-v6 >/dev/null 2>&1
+        systemctl restart hysteria-v6
+    fi
+
+    systemctl daemon-reload
     sleep 2
-    if systemctl is-active --quiet hysteria-server; then success "Hysteria 2 启动成功！"; else error "启动失败！"; journalctl -u hysteria-server --no-pager -n 20; exit 1; fi
+    
+    local v4_ok=false; local v6_ok=false
+    if [ -f "$CONFIG_V4" ] && systemctl is-active --quiet hysteria-v4; then v4_ok=true; fi
+    if [ -f "$CONFIG_V6" ] && systemctl is-active --quiet hysteria-v6; then v6_ok=true; fi
+    
+    if [ "$v4_ok" = true ] || [ "$v6_ok" = true ]; then
+        success "Hysteria 2 双进程启动成功！"
+    else
+        error "启动失败！日志如下:"
+        [ -f "$CONFIG_V4" ] && journalctl -u hysteria-v4 --no-pager -n 5
+        [ -f "$CONFIG_V6" ] && journalctl -u hysteria-v6 --no-pager -n 5
+    fi
 }
 
 # --- 7. 输出信息 ---
 show_info() {
-    info "正在获取公网 IP 地址..."
-    IPV4=$(ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d / -f 1 | head -n 1)
-    IPV6=$(ip -6 addr show scope global | grep inet6 | awk '{print $2}' | cut -d / -f 1 | head -n 1)
-
-    if [ -z "$IPV4" ]; then IPV4=$(curl -s4m5 -A "Mozilla/5.0" https://ip.sb || curl -s4m5 -A "Mozilla/5.0" https://api.ip.sb/ip); fi
-    if [ -z "$IPV6" ]; then IPV6=$(curl -s6m5 -A "Mozilla/5.0" https://ip.sb || curl -s6m5 -A "Mozilla/5.0" https://api.ip.sb/ip); fi
+    # 动态读取
+    [ -f "$CONFIG_V4" ] && PORT=$(grep "listen:" $CONFIG_V4 | awk -F ':' '{print $NF}' | tr -d '" ')
+    [ -f "$CONFIG_V6" ] && [ -z "$PORT" ] && PORT=$(grep "listen:" $CONFIG_V6 | awk -F ']:' '{print $2}' | tr -d '" ')
     
-    L_PORT=$(grep "listen:" $CONFIG_FILE | awk '{print $2}' | sed 's/://')
-    L_PASS=$(grep -A 2 "auth:" $CONFIG_FILE | grep "password:" | awk '{print $2}')
+    [ -f "$CONFIG_V4" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V4 | grep "password:" | awk '{print $2}')
+    [ -f "$CONFIG_V6" ] && [ -z "$PASS" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V6 | grep "password:" | awk '{print $2}')
+    
+    # 从 bind 或 listen 中提取 IP
+    [ -f "$CONFIG_V4" ] && IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
+    [ -f "$CONFIG_V6" ] && IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/^\[//;s/\]:.*//')
+    
     L_SNI="cdn.jsdelivr.net"
 
     echo -e "${YELLOW}===============================================${NC}"
-    echo -e "${GREEN}      Hysteria 2 Pro 配置信息 (安全版)      ${NC}"
+    echo -e "${GREEN}      Hysteria 2 双栈隔离版 (运行信息)      ${NC}"
     echo -e "${YELLOW}===============================================${NC}"
-    echo -e "端口       : ${CYAN}${L_PORT}${NC}"
-    echo -e "认证密码   : ${CYAN}${L_PASS}${NC}"
+    echo -e "端口       : ${CYAN}${PORT}${NC}"
+    echo -e "认证密码   : ${CYAN}${PASS}${NC}"
     echo -e "伪装 SNI   : ${CYAN}${L_SNI}${NC}"
-    echo -e "伪装模式   : ${CYAN}404 Not Found (静态文件)${NC}"
-    echo -e "允许不安全 : ${CYAN}True (自签证书)${NC}"
+    echo -e "伪装模式   : ${CYAN}本地文件 (404 伪装)${NC}"
     echo -e "${YELLOW}-----------------------------------------------${NC}"
 
-    LINK_BASE="hysteria2://$L_PASS@"
-    LINK_PARAMS=":$L_PORT?insecure=1&sni=$L_SNI&alpn=h3&allowInsecure=1"
+    LINK_BASE="hysteria2://$PASS@"
+    LINK_PARAMS=":$PORT?insecure=1&sni=$L_SNI&alpn=h3"
 
     if [ -n "$IPV4" ]; then
-        echo -e "本地 IP (IPv4): ${CYAN}${IPV4}${NC}"
-        echo -e "${GREEN}IPv4 分享链接:${NC}"
-        echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS}#Hy2-Safe-IPv4${NC}"
+        echo -e "节点 1 [IPv4]:"
+        echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS}#Hy2-IPv4${NC}"
         echo
     fi
 
     if [ -n "$IPV6" ]; then
-        echo -e "本地 IP (IPv6): ${CYAN}${IPV6}${NC}"
-        echo -e "${GREEN}IPv6 分享链接 (更推荐):${NC}"
-        echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS}#Hy2-Safe-IPv6${NC}"
+        echo -e "节点 2 [IPv6]:"
+        echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS}#Hy2-IPv6${NC}"
         echo
-    fi
-
-    if [ -z "$IPV4" ] && [ -z "$IPV6" ]; then
-        warn "未检测到公网 IP，请自行检查网络配置。"
     fi
     echo -e "${YELLOW}===============================================${NC}"
 }
 
 # --- 菜单 ---
 install() { cleanup_environment install; install_dependencies; install_kernel; generate_cert; create_config; start_service; show_info; }
+
+change_port() {
+    if [ ! -f "$CONFIG_V4" ] && [ ! -f "$CONFIG_V6" ]; then error "未安装"; return; fi
+    NEW_PORT=$(shuf -i 20000-50000 -n 1)
+    
+    if [ -f "$CONFIG_V4" ]; then
+        IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
+        sed -i "s/^listen: .*/listen: \"$IPV4:$NEW_PORT\"/" $CONFIG_V4
+        systemctl restart hysteria-v4
+    fi
+    if [ -f "$CONFIG_V6" ]; then
+        IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/:.*//')
+        sed -i "s/^listen: .*/listen: \"$IPV6:$NEW_PORT\"/" $CONFIG_V6
+        systemctl restart hysteria-v6
+    fi
+    success "端口已修改为: $NEW_PORT"
+    show_info
+}
+
 show_menu() {
-    clear; echo -e "${BLUE}=======================================${NC}"; echo -e "   Hysteria 2 官方内核脚本 (Pro V9 安全版)"; echo -e "${BLUE}=======================================${NC}"
-    echo -e "1. 安装 / 重置 (自动配置 404 伪装)"; echo "2. 查看 配置 & 链接"; echo "3. 修改 端口"; echo "4. 停止 / 5. 启动 / 6. 重启"; echo "7. 查看 日志"; echo "8. 彻底卸载"; echo "0. 退出"
+    clear; echo -e "${BLUE}=======================================${NC}"; echo -e "   Hysteria 2 双进程管理 (Pro V20)"; echo -e "${BLUE}=======================================${NC}"
+    echo -e "1. 安装 / 重置 (双栈物理隔离 + 原配置逻辑)"; echo "2. 查看 配置 & 链接"; echo "3. 修改 端口"; echo "4. 重启 服务"; echo "5. 彻底卸载"; echo "0. 退出"
     echo -e "---------------------------------------"; read -p "请选择: " c
     case "$c" in
         1) install ;;
-        2) if [ -f "$CONFIG_FILE" ]; then show_info; else error "未安装"; fi ;;
-        3) if [ -f "$CONFIG_FILE" ]; then NEW_PORT=$(shuf -i 10000-65535 -n 1); sed -i "s/^listen: :.*/listen: :$NEW_PORT/" $CONFIG_FILE; info "端口已修改为: $NEW_PORT"; start_service; show_info; else error "未安装"; fi ;;
-        4) systemctl stop hysteria-server && success "已停止" ;;
-        5) systemctl start hysteria-server && success "已启动" ;;
-        6) systemctl restart hysteria-server && success "已重启" ;;
-        7) journalctl -u hysteria-server -f ;;
-        8) cleanup_environment uninstall ;;
+        2) if [ -f "$CONFIG_V4" ] || [ -f "$CONFIG_V6" ]; then show_info; else error "未安装"; fi ;;
+        3) change_port ;;
+        4) systemctl restart hysteria-v4 hysteria-v6 && success "已重启" ;;
+        5) cleanup_environment uninstall ;;
         0) exit 0 ;;
         *) error "无效输入" ;;
     esac
