@@ -120,7 +120,7 @@ create_config() {
     echo -e "  IPv4: ${GREEN}${IPV4:-无}${NC}"
     echo -e "  IPv6: ${GREEN}${IPV6:-无}${NC}"
 
-    PORT=$(shuf -i 20000-50000 -n 1)
+    PORT=$(shuf -i 10000-65534 -n 1)
     AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
 
     # === IPv4 配置 (严格按照你的要求) ===
@@ -316,7 +316,7 @@ install() { cleanup_environment install; install_dependencies; install_kernel; g
 
 change_port() {
     if [ ! -f "$CONFIG_V4" ] && [ ! -f "$CONFIG_V6" ]; then error "未安装"; return; fi
-    NEW_PORT=$(shuf -i 20000-50000 -n 1)
+    NEW_PORT=$(shuf -i 10000-65534 -n 1)
     
     if [ -f "$CONFIG_V4" ]; then
         IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
