@@ -29,7 +29,7 @@ NC='\033[0m'
 
 # --- 变量初始化 ---
 UUID=""
-PORT_XHTTP=""
+PORT_XHTTP="8443"
 PORT_VISION="443"
 PORT_LO="65535"
 PRIVATE_KEY=""
@@ -146,10 +146,10 @@ install_node() {
     SHORT_ID=$(openssl rand -hex 4 | tr -d '\n\r')
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
-    while true; do
-        PORT_XHTTP=$(shuf -i 10000-65534 -n 1)
-        if [ "$PORT_XHTTP" != "443" ]; then break; fi
-    done
+    #while true; do
+        #PORT_XHTTP=$(shuf -i 10000-65534 -n 1)
+        #if [ "$PORT_XHTTP" != "443" ]; then break; fi
+    #done
 
     # ==========================================
     #  配置组装区 (解决 JSON 逗号问题的核心)
