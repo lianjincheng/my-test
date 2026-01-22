@@ -404,7 +404,10 @@ EOF
 
 display_and_store_config_info() {
     # 修复：在显示前强制加载一次配置，确保从菜单进入时变量存在
-    local OBFS_PASS=$(grep -A 2 '"obfs":' "$SINGBOX_CONFIG_FILE" | grep '"password":' | awk -F '"' '{print $4}')
+    local OBFS_PASS=""
+    if [ -f "$SINGBOX_CONFIG_FILE" ]; then
+        OBFS_PASS=$(jq -r '.inbounds[] | select(.type == "hysteria2") | .obfs.password // ""' "$SINGBOX_CONFIG_FILE")
+    fi
     load_persistent_info
     get_server_ip
 
@@ -414,7 +417,11 @@ display_and_store_config_info() {
 
     echo -e "${GREEN} 1. [智能] Hysteria2 ${WARP_STATUS}${NC}"
     local HY2_BASE="hy2://${HY2_SMART_PASSWORD}@"
-    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&alpn=h3&allowInsecure=1&obfs=salamander&obfs-password=${OBFS_PASS}"
+    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&alpn=h3&allowInsecure=1"
+
+    if [ -n "$OBFS_PASS" ]; then
+        HY2_PARAMS+="&obfs=salamander&obfs-password=${OBFS_PASS}"
+    fi
     
     if [ -n "$IPV4_ADDR" ]; then
         echo -e "${YELLOW}   [IPv4]:${NC} ${HY2_BASE}${IPV4_ADDR}${HY2_PARAMS}#Hy2-warp-IPv4"
@@ -437,7 +444,7 @@ display_and_store_config_info() {
         
         # --- 修改开始：固定端口为443，遍历指定优选IP ---
         local FIXED_PORT=443
-        local CF_IPS=("8.223.63.150" "206.190.235.108" "45.78.55.214" "34.143.159.175" )
+        local CF_IPS=("8.223.63.150" "206.190.235.108" "45.78.55.214")
 
         # 遍历 IP 数组生成链接
         for current_ip in "${CF_IPS[@]}"; do
