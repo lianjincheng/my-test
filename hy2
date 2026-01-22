@@ -289,8 +289,13 @@ show_info() {
     [ -f "$CONFIG_V4" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V4 | grep "password:" | awk '{print $2}')
     [ -f "$CONFIG_V6" ] && [ -z "$PASS" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V6 | grep "password:" | awk '{print $2}')
 
-    # 提取混淆密码 (从 obfs 字段)
+    # 1. 尝试从 IPv4 配置文件提取混淆密码
     [ -f "$CONFIG_V4" ] && OBFS=$(grep -A 5 "obfs:" $CONFIG_V4 | grep "password:" | awk '{print $2}' | tr -d '"')
+    
+    # 2. 如果上面没提取到（例如机器只有 IPv6），则从 IPv6 配置文件提取
+    if [ -z "$OBFS" ] && [ -f "$CONFIG_V6" ]; then
+        OBFS=$(grep -A 5 "obfs:" $CONFIG_V6 | grep "password:" | awk '{print $2}' | tr -d '"')
+    fi
 
     # 从 bind 或 listen 中提取 IP
     [ -f "$CONFIG_V4" ] && IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
