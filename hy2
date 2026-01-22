@@ -75,7 +75,7 @@ install_kernel() {
     case "$ARCH" in x86_64) ARCH="amd64" ;; aarch64) ARCH="arm64" ;; *) error "不支持的架构: $ARCH"; exit 1 ;; esac
     
     local LATEST_VER=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ -z "$LATEST_VER" ]; then LATEST_VER="v2.2.4"; fi # 保底
+    if [ -z "$LATEST_VER" ]; then LATEST_VER="v2.7.0"; fi # 保底
     info "版本: $LATEST_VER"
     
     local URL="https://github.com/apernet/hysteria/releases/download/${LATEST_VER}/hysteria-linux-${ARCH}"
