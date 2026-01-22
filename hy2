@@ -122,6 +122,8 @@ create_config() {
 
     PORT=$(shuf -i 10000-65534 -n 1)
     AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
+    # 生成混淆密码
+    OBFS_PASS=$(openssl rand -hex 16)
 
     # === IPv4 配置 (严格按照你的要求) ===
     if [ -n "$IPV4" ]; then
@@ -134,6 +136,10 @@ tls:
 auth:
   type: password
   password: $AUTH_PASS
+obfs:
+  type: salamander
+  salamander:
+    password: "$OBFS_PASS"
 quic:
   initStreamReceiveWindow: 8388608
   maxStreamReceiveWindow: 8388608
@@ -178,6 +184,10 @@ tls:
 auth:
   type: password
   password: $AUTH_PASS
+obfs:
+  type: salamander
+  salamander:
+    password: "$OBFS_PASS"
 quic:
   initStreamReceiveWindow: 8388608
   maxStreamReceiveWindow: 8388608
@@ -278,7 +288,10 @@ show_info() {
     
     [ -f "$CONFIG_V4" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V4 | grep "password:" | awk '{print $2}')
     [ -f "$CONFIG_V6" ] && [ -z "$PASS" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V6 | grep "password:" | awk '{print $2}')
-    
+
+    # 提取混淆密码 (从 obfs 字段)
+    [ -f "$CONFIG_V4" ] && OBFS=$(grep -A 5 "obfs:" $CONFIG_V4 | grep "password:" | awk '{print $2}' | tr -d '"')
+
     # 从 bind 或 listen 中提取 IP
     [ -f "$CONFIG_V4" ] && IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
     [ -f "$CONFIG_V6" ] && IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/^\[//;s/\]:.*//')
@@ -290,12 +303,13 @@ show_info() {
     echo -e "${YELLOW}===============================================${NC}"
     echo -e "端口       : ${CYAN}${PORT}${NC}"
     echo -e "认证密码   : ${CYAN}${PASS}${NC}"
+    echo -e "混淆密码   : ${CYAN}${OBFS}${NC} (Salamander)"
     echo -e "伪装 SNI   : ${CYAN}${L_SNI}${NC}"
     echo -e "伪装模式   : ${CYAN}本地文件 (404 伪装)${NC}"
     echo -e "${YELLOW}-----------------------------------------------${NC}"
 
     LINK_BASE="hysteria2://$PASS@"
-    LINK_PARAMS=":$PORT?insecure=1&sni=$L_SNI&alpn=h3"
+    LINK_PARAMS=":$PORT?insecure=1&sni=$L_SNI&alpn=h3&obfs=salamander&obfs-password=$OBFS"
 
     if [ -n "$IPV4" ]; then
         echo -e "节点 1 [IPv4]:"
