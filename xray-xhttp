@@ -28,7 +28,7 @@ NC='\033[0m'
 
 # --- 全局变量 ---
 UUID=""
-PORT_XHTTP=""   # 公网端口
+PORT_XHTTP="8443"   # 公网端口
 PORT_LO=""      # 本地回环端口 (用于防盗安检)
 PRIVATE_KEY=""
 PUBLIC_KEY=""
@@ -156,13 +156,13 @@ install_node() {
     # [核心修改] 生成两个不重复的随机端口
     # PORT_XHTTP: 随机端口 ($(shuf -i 10000-65535 -n 1))
     # PORT_LO: 本地回环端口 (10000-65535)，用于内部转发安检
-    while true; do
-        PORT_XHTTP=443
-        PORT_LO=65535
-        if [ "$PORT_XHTTP" != "$PORT_LO" ]; then
-            break
-        fi
-    done
+    #while true; do
+    #    PORT_XHTTP=443
+    #   PORT_LO=65535
+    #   if [ "$PORT_XHTTP" != "$PORT_LO" ]; then
+    #       break
+    #   fi
+    #done
 
     local LISTEN_ADDR="::"
     if sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1"; then
