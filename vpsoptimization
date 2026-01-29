@@ -113,6 +113,9 @@ net.ipv4.tcp_synack_retries = 2
 # 允许的最大缓冲区 (32MB)，跑满千兆/万兆必备
 net.core.rmem_max = 33554432
 net.core.wmem_max = 33554432
+# 恢复大缓冲区，稳定 UDP/Hysteria/QUIC 吞吐
+net.core.rmem_default = 2097152
+net.core.wmem_default = 2097152
 # TCP 自动调优范围 (最小 默认 最大)
 net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 65536 33554432
