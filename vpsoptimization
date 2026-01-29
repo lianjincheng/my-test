@@ -117,8 +117,8 @@ net.core.wmem_max = 33554432
 net.core.rmem_default = 2097152
 net.core.wmem_default = 2097152
 # TCP 自动调优范围 (最小 默认 最大)
-net.ipv4.tcp_rmem = 4096 87380 33554432
-net.ipv4.tcp_wmem = 4096 65536 33554432
+net.ipv4.tcp_rmem = 4096 16777216 33554432
+net.ipv4.tcp_wmem = 4096 16777216 33554432
 # UDP 缓冲区 (Hysteria 2 暴力发包需要)
 net.ipv4.udp_mem = 24576 49152 98304
 net.ipv4.udp_rmem_min = 8192
@@ -131,7 +131,7 @@ net.ipv4.tcp_reordering = 7
 net.ipv4.tcp_frto = 2
 # 保护 TIME_WAIT
 net.ipv4.tcp_rfc1337 = 1
-net.ipv4.tcp_adv_win_scale = 1
+net.ipv4.tcp_adv_win_scale = -2
 net.ipv4.tcp_window_scaling = 1
 # 开启 MTU 探测 (解决断流的关键)
 net.ipv4.tcp_mtu_probing = 1
