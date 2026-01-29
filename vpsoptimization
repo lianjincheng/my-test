@@ -102,83 +102,85 @@ apply_sysctl_optimizations() {
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# --- 2. 队列优化 (CPU 忙时的缓冲地带，ddos防护优化) ---
-# 允许数据包排队，防止 CPU 处理不过来时直接丢包
+# --- 2. 队列优化 (防DDoS，高并发) ---
 net.core.netdev_max_backlog = 32768
 net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_syncookies = 1
 net.ipv4.tcp_synack_retries = 2
 
-# --- 3. 缓冲区优化  ---
+# --- 3. 缓冲区优化 (大流量) ---
+# 允许的最大缓冲区 (32MB)，跑满千兆/万兆必备
 net.core.rmem_max = 33554432
 net.core.wmem_max = 33554432
+# TCP 自动调优范围 (最小 默认 最大)
 net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 65536 33554432
+# UDP 缓冲区 (Hysteria 2 暴力发包需要)
 net.ipv4.udp_mem = 24576 49152 98304
 net.ipv4.udp_rmem_min = 8192
 net.ipv4.udp_wmem_min = 8192
-# 乱序容忍 (节约流量)
+
+# --- 4. TCP 行为优化 ---
+# 乱序容忍 (稍微调高，适应跨境线路的抖动)
 net.ipv4.tcp_reordering = 7
+# 无线网络优化
 net.ipv4.tcp_frto = 2
+# 保护 TIME_WAIT
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_adv_win_scale = 1
-
-# --- 4. TCP 智能逻辑 (纯正面收益) ---
 net.ipv4.tcp_window_scaling = 1
+# 开启 MTU 探测 (解决断流的关键)
 net.ipv4.tcp_mtu_probing = 1
+# 快速启动
 net.ipv4.tcp_slow_start_after_idle = 0
+# 不缓存历史指标
 net.ipv4.tcp_no_metrics_save = 1
+# 关闭 ECN (防止被旧路由丢包)
 net.ipv4.tcp_ecn = 0
+# 开启自动缓冲区调整
 net.ipv4.tcp_moderate_rcvbuf = 1
+# 降低发包延迟
 net.ipv4.tcp_notsent_lowat = 131072
 
-# --- 系统资源限制解除 ---
+# --- 5. 系统资源限制解除 ---
 vm.swappiness = 1
 vm.vfs_cache_pressure = 50
 fs.file-max = 1048576
 fs.nr_open = 1048576
 net.ipv4.ip_local_port_range = 10240 65535
 
-# --- BBR 刚需 ---
+# --- 6. 丢包恢复 (BBR 刚需) ---
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1
 net.ipv4.tcp_timestamps = 1
 
-# --- 稳定性保障 ---
-# 遇到崩溃自动重启
+# --- 7. 稳定性保障 ---
 kernel.panic = 10
-
-# IPv6开关，1关闭，0开启
 net.ipv6.conf.all.disable_ipv6 = 0
 net.ipv6.conf.default.disable_ipv6 = 0
 net.ipv6.conf.lo.disable_ipv6 = 0
 
-# --- Argo 隧道保活优化 ---
+# --- 8. Argo / 长连接保活 ---
+# 缩短保活时间，防止 NAT 映射过期
 net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_retries2 = 8
 
-# --- UDP 连接追踪优化 (针对 Hysteria2/QUIC) ---
-# 只有收到单向包时的超时时间 (默认30秒，改为60秒)
+# --- 9. 连接追踪优化 (关键！防止炸内存) ---
+# 针对 Hysteria 2 UDP 流媒体优化
 net.netfilter.nf_conntrack_udp_timeout = 60
-# 双方都有数据传输后的超时时间 (默认120秒，改为300秒)
-# 也就是让 VPS 记住这条 UDP 连接 5 分钟，防止看视频暂停时断连
 net.netfilter.nf_conntrack_udp_timeout_stream = 300
 
-# --- 连接追踪表优化 (加快垃圾回收) ---
-# 上限设为 26万，防止 RackNerd 小内存爆掉
+# 提高连接上限 (对于 1G 内存，26万有点极限但通常够用，512M内存建议改为 65536)
 net.netfilter.nf_conntrack_max = 262144
 
-# 1. 缩短 TCP 已建立连接的保留时间 (默认5天太久了，改1小时足够)
+# 加快无效连接的回收速度
 net.netfilter.nf_conntrack_tcp_timeout_established = 3600
-
-# 2. 缩短 TCP 挥手阶段的等待时间 (加快释放无效连接)
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
-
 EOF
 
     sysctl -p "$sysctl_conf" >/dev/null 2>&1 || warn "部分内核参数应用失败 (正常现象，视内核版本而定)。"
