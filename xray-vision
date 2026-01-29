@@ -29,7 +29,7 @@ NC='\033[0m'
 
 # --- 全局变量 ---
 UUID=""
-PORT_VISION="443"  # Vision 强制使用 443
+PORT_VISION="8443"
 PORT_LO=""         # 本地回环端口 (随机生成)
 PRIVATE_KEY=""
 PUBLIC_KEY=""
