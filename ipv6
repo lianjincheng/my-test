@@ -1,0 +1,237 @@
+#!/bin/bash
+
+echo "====================================="
+echo "ADD IPv6 管理工具 (修复增强版)"
+echo "已修复: 重启后IP丢失导致路由设置失败的问题"
+echo "已修复: 增强 Systemd 下 rc.local 的兼容性"
+echo "====================================="
+
+# 1. 必须以 root 权限执行
+if [ "$(id -u)" -ne 0 ]; then
+    echo "请以root权限执行此脚本。"
+    exit 1
+fi
+
+# 确保 rc.local 服务开启 (针对 Systemd)
+function ensure_rc_local() {
+    if [ ! -f /etc/rc.local ]; then
+        echo '#!/bin/bash' > /etc/rc.local
+        echo 'exit 0' >> /etc/rc.local
+        chmod +x /etc/rc.local
+    fi
+    
+    # 尝试启动服务
+    if command -v systemctl &> /dev/null; then
+        systemctl enable rc-local &> /dev/null
+        systemctl start rc-local &> /dev/null
+    fi
+}
+
+# 2. 选择网卡
+function choose_interface() {
+    GLOBAL_IPV6_INTERFACES=()
+    # 优化网卡获取逻辑
+    for iface in $(ip -o link show | awk -F': ' '{print $2}'); do
+        # 排除 lo 和虚拟网卡
+        if [ "$iface" != "lo" ] && ip -6 addr show dev "$iface" scope global | grep -q 'inet6'; then
+            GLOBAL_IPV6_INTERFACES+=("$iface")
+        fi
+    done
+    
+    if [ ${#GLOBAL_IPV6_INTERFACES[@]} -eq 0 ]; then
+        echo "未检测到具有全局 IPv6 地址的网卡。"
+        exit 1
+    fi
+    
+    if [ ${#GLOBAL_IPV6_INTERFACES[@]} -eq 1 ]; then
+        SELECTED_IFACE="${GLOBAL_IPV6_INTERFACES[0]}"
+    else
+        echo "检测到以下网卡："
+        for i in "${!GLOBAL_IPV6_INTERFACES[@]}"; do
+            echo "$((i+1)). ${GLOBAL_IPV6_INTERFACES[$i]}"
+        done
+        read -p "请选择网卡编号: " choice
+        if ! [[ "$choice" =~ ^[1-9][0-9]*$ ]] || [ "$choice" -gt "${#GLOBAL_IPV6_INTERFACES[@]}" ]; then
+            echo "选择无效。"
+            exit 1
+        fi
+        SELECTED_IFACE="${GLOBAL_IPV6_INTERFACES[$((choice-1))]}"
+    fi
+    echo "当前网卡：$SELECTED_IFACE"
+}
+
+# 3. 添加随机 IPv6
+function add_random_ipv6() {
+    if ! command -v python3 &> /dev/null; then
+        echo "错误: 需要安装 python3"
+        exit 1
+    fi
+
+    choose_interface
+    ipv6_cidr=$(ip -6 addr show dev "$SELECTED_IFACE" scope global | awk '/inet6/ {print $2}' | head -n1)
+    BASE_ADDR=$(echo "$ipv6_cidr" | cut -d'/' -f1)
+    PLEN=$(echo "$ipv6_cidr" | cut -d'/' -f2)
+
+    if [ "$PLEN" -eq 128 ]; then
+        echo "错误: 前缀为 /128，无法生成子地址。"
+        exit 1
+    fi
+
+    read -p "请输入要生成的 IP 数量: " COUNT
+    if ! [[ "$COUNT" =~ ^[0-9]+$ ]]; then echo "请输入整数"; exit 1; fi
+
+    for (( i=1; i<=COUNT; i++ )); do
+        RANDOM_ADDR=$(python3 -c "import ipaddress, random; \
+net=ipaddress.ip_network('$BASE_ADDR/$PLEN', strict=False); \
+print(ipaddress.IPv6Address(random.randint(int(net.network_address), int(net.broadcast_address))))")
+        
+        echo "添加: ${RANDOM_ADDR}/${PLEN}"
+        ip -6 addr add "${RANDOM_ADDR}/${PLEN}" dev "$SELECTED_IFACE"
+        if [ $? -eq 0 ]; then
+            echo "${RANDOM_ADDR}/${PLEN}" >> /tmp/added_v6_ipv6.txt
+        fi
+    done
+    echo "添加完成。"
+}
+
+# 4. 管理默认出口 (核心修复部分)
+function manage_default_ipv6() {
+    choose_interface
+
+    echo "可用 IPv6 地址："
+    mapfile -t ipv6_list < <(ip -6 addr show dev "$SELECTED_IFACE" scope global | awk '/inet6/ {print $2}')
+    
+    for i in "${!ipv6_list[@]}"; do
+        echo "$((i+1)). ${ipv6_list[$i]}"
+    done
+
+    read -p "选择作为默认出口的 IP 序号: " addr_choice
+    if ! [[ "$addr_choice" =~ ^[0-9]+$ ]] || [ "$addr_choice" -gt "${#ipv6_list[@]}" ]; then
+        echo "无效选择"; exit 1;
+    fi
+
+    SELECTED_ENTRY="${ipv6_list[$((addr_choice-1))]}"
+    SELECTED_IP=$(echo "$SELECTED_ENTRY" | cut -d'/' -f1)
+    SELECTED_PLEN=$(echo "$SELECTED_ENTRY" | cut -d'/' -f2)
+    
+    # 智能获取网关
+    GATEWAY=$(ip -6 route show default | awk '/via/ {print $3}' | head -n1)
+    if [ -z "$GATEWAY" ]; then
+        # 尝试非默认路由的网关
+        GATEWAY=$(ip -6 route | grep default | awk '{print $3}' | head -n1)
+    fi
+    
+    if [ -z "$GATEWAY" ]; then
+        echo "警告: 未找到默认网关，可能需要手动指定。"
+    else
+        echo "网关: $GATEWAY"
+    fi
+
+    # 应用路由
+    ip -6 route replace default via "$GATEWAY" dev "$SELECTED_IFACE" src "$SELECTED_IP" onlink
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ 默认出口已临时切换为: $SELECTED_IP"
+    else
+        echo "❌ 设置失败"
+        return
+    fi
+
+    # 持久化询问
+    read -p "是否写入开机自启 (rc.local)? [y/n]: " persist
+    if [[ "$persist" =~ ^[Yy]$ ]]; then
+        ensure_rc_local
+        
+        # 修复逻辑：必须先添加IP，再设置路由
+        # 1. 写入添加IP的命令 (防止重启后IP丢失导致路由设置失败)
+        # 检查是否是主IP（主IP通常由系统网络管理器管理，不需要我们在rc.local添加）
+        # 这里简单处理：直接写入添加命令，如果IP已存在，ip命令只会报错但不影响后续
+        ADD_IP_CMD="ip -6 addr add $SELECTED_ENTRY dev $SELECTED_IFACE"
+        if ! grep -Fxq "$ADD_IP_CMD" /etc/rc.local; then
+            # 插入到 exit 0 之前
+            sed -i -e '$i '"$ADD_IP_CMD" /etc/rc.local
+            echo "已添加 IP 恢复命令到 rc.local"
+        fi
+        
+        # 2. 写入设置路由的命令
+        ROUTE_CMD="ip -6 route replace default via $GATEWAY dev $SELECTED_IFACE src $SELECTED_IP onlink"
+        # 先清理旧的 default 路由设置命令，防止冲突
+        sed -i '/ip -6 route replace default/d' /etc/rc.local
+        sed -i '/ip -6 route add default/d' /etc/rc.local
+        
+        # 插入新命令
+        sed -i -e '$i '"$ROUTE_CMD" /etc/rc.local
+        echo "✅ 已添加路由设置命令到 rc.local"
+        echo "重启后将自动恢复此 IP 和 出口设置。"
+    fi
+}
+
+# 5. 删除添加的 IP
+function delete_all_ipv6() {
+    choose_interface
+    if [ ! -f /tmp/added_v6_ipv6.txt ]; then
+        echo "没有本次运行添加的记录。"
+        return
+    fi
+    while read -r entry; do
+        [ -n "$entry" ] && ip -6 addr del "$entry" dev "$SELECTED_IFACE" 2>/dev/null
+    done < /tmp/added_v6_ipv6.txt
+    rm -f /tmp/added_v6_ipv6.txt
+    echo "已清理本次添加的 IP。"
+}
+
+# 6. 只保留当前 IP (净化)
+function delete_except_default_ipv6() {
+    choose_interface
+    # 获取当前路由的源IP
+    CURRENT_SRC=$(ip -6 route show default | awk '/src/ {print $NF}')
+    
+    if [ -z "$CURRENT_SRC" ]; then
+        echo "无法确定当前默认出口 IP。"
+        return
+    fi
+    
+    echo "保留 IP: $CURRENT_SRC"
+    
+    # 获取接口上所有 global IP
+    mapfile -t ip_list < <(ip -6 addr show dev "$SELECTED_IFACE" scope global | awk '/inet6/ {print $2}')
+    
+    for entry in "${ip_list[@]}"; do
+        ip_only=$(echo "$entry" | cut -d'/' -f1)
+        if [ "$ip_only" != "$CURRENT_SRC" ]; then
+            echo "删除闲置 IP: $entry"
+            ip -6 addr del "$entry" dev "$SELECTED_IFACE"
+        fi
+    done
+    
+    echo "清理完成。"
+    
+    read -p "是否更新 rc.local 以保持此状态? [y/n]: " persist
+    if [[ "$persist" =~ ^[Yy]$ ]]; then
+        ensure_rc_local
+        # 清理 rc.local 中所有添加 IP 的命令，只留当前的
+        sed -i '/ip -6 addr add/d' /etc/rc.local
+        
+        # 获取当前IP的完整CIDR格式用于添加
+        CURRENT_CIDR=$(ip -6 addr show dev "$SELECTED_IFACE" | grep "$CURRENT_SRC" | awk '{print $2}')
+        
+        ADD_CMD="ip -6 addr add $CURRENT_CIDR dev $SELECTED_IFACE"
+        sed -i -e '$i '"$ADD_CMD" /etc/rc.local
+        echo "rc.local 已更新。"
+    fi
+}
+
+# 菜单
+echo "1. 添加随机 IPv6"
+echo "2. 设置默认出口 (推荐)"
+echo "3. 删除本次添加的 IP"
+echo "4. 净化 (只保留当前出口 IP)"
+read -p "选择: " opt
+
+case "$opt" in
+    1) add_random_ipv6 ;;
+    2) manage_default_ipv6 ;;
+    3) delete_all_ipv6 ;;
+    4) delete_except_default_ipv6 ;;
+    *) echo "无效" ;;
+esac
