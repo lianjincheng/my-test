@@ -1,48 +1,30 @@
 #!/bin/bash
 
 # =========================================================
-#  Sing-Box Argo 专用版 (Warp/Direct 分流)
-#  Feature: 去除 Hy2，仅保留 Argo Tunnel
-#  Feature: 双 UUID 路由，实现不同节点走不同出口
-#  Feature: 内置优选 IP (直连) 和 优选域名 (Warp)
+#  Xray Argo 专用增强版 (Direct/Warp 分流)
+#  1. 支持双 UUID：一个走 VPS 直连，一个走 WARP 落地
+#  2. 支持原生 WARP：自动申请账户并计算 Reserved 字节
+#  3. 逻辑严谨：防进程冲突，支持深度卸载，一键换域名
 # =========================================================
 
-# --- Configuration ---
-SINGBOX_INSTALL_PATH_EXPECTED="/usr/local/bin/sing-box"
-SINGBOX_CONFIG_DIR="/usr/local/etc/sing-box"
-SINGBOX_CONFIG_FILE="${SINGBOX_CONFIG_DIR}/config.json"
-SINGBOX_SERVICE_FILE="/etc/systemd/system/sing-box.service"
+# --- 配置路径 ---
+XRAY_PATH="/usr/local/bin/xray"
+XRAY_CONFIG_DIR="/usr/local/etc/xray"
+XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
+XRAY_SERVICE_FILE="/etc/systemd/system/xray.service"
+XRAY_SHARE_DIR="/usr/local/share/xray"
 
 CLOUDFLARED_PATH="/usr/local/bin/cloudflared"
-ARGO_LOG_FILE="${SINGBOX_CONFIG_DIR}/argo.log"
+ARGO_LOG_FILE="${XRAY_CONFIG_DIR}/argo.log"
 ARGO_SERVICE_FILE="/etc/systemd/system/argo.service"
+PERSISTENT_INFO_FILE="${XRAY_CONFIG_DIR}/.xray_argo_info"
 
-PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.singbox_argo_info"
-
-# Global Vars
-SINGBOX_CMD=""
-IPV4_ADDR=""
-IPV6_ADDR=""
-
-# Node Vars
-ARGO_PORT=""
-ARGO_PATH="/argo" 
-
-# UUIDs for Routing
-UUID_DIRECT=""  # 走直连的 UUID
-UUID_WARP=""    # 走 Warp 的 UUID
-
-# WARP Vars
-WARP_PRIVATE_KEY=""
-WARP_PEER_PUBLIC_KEY=""
-WARP_ADDRESS=""
-WARP_RESERVED=""
-
-# Fixed Addresses
+# --- 节点默认值 ---
+ARGO_PATH="/argo"
 CF_IPS=("8.223.63.150" "206.190.235.108" "34.143.159.175")
 CF_DOMAIN="yg1.ygkkk.dpdns.org"
 
-# --- Colors ---
+# --- 颜色定义 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -51,27 +33,228 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# --- 基础工具函数 ---
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
-print_author_info() {
-    echo -e "${MAGENTA}================================================${NC}"
-    echo -e "${CYAN}   Sing-Box Argo 专用版 (Direct/Warp 分流)   ${NC}"
-    echo -e "${MAGENTA}================================================${NC}"
+check_root() {
+    [[ $EUID -ne 0 ]] && error "需 root 权限运行。" && exit 1
 }
 
-load_persistent_info() {
-    if [ -f "$PERSISTENT_INFO_FILE" ]; then 
+# --- 核心清理：防止进程冲突 ---
+force_cleanup() {
+    info "正在清理可能存在的残留进程与服务..."
+    systemctl stop xray argo 2>/dev/null
+    systemctl disable xray argo 2>/dev/null
+    
+    # 强制杀死进程
+    pkill -9 xray 2>/dev/null
+    pkill -9 cloudflared 2>/dev/null
+    
+    # 如果端口仍被占用，强制释放
+    if [ -f "$PERSISTENT_INFO_FILE" ]; then
         source "$PERSISTENT_INFO_FILE"
+        [ -n "$ARGO_PORT" ] && fuser -k -n tcp $ARGO_PORT 2>/dev/null
+    fi
+    
+    rm -f "$ARGO_LOG_FILE"
+    sleep 1
+}
+
+# --- 依赖安装 ---
+check_dependencies() {
+    info "检查并安装依赖..."
+    local deps=("curl" "jq" "openssl" "wireguard-tools" "xxd" "psmisc")
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &>/dev/null; then
+            apt-get update -y && apt-get install -y "$dep" || yum install -y "$dep"
+        fi
+    done
+}
+
+# --- 安装内核 ---
+install_cores() {
+    if [ ! -f "$XRAY_PATH" ]; then
+        info "安装 Xray-core..."
+        bash <(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh) --skip-config
+    fi
+    
+    if [ ! -f "$CLOUDFLARED_PATH" ]; then
+        info "安装 Cloudflared..."
+        local ARCH=$(uname -m)
+        [[ "$ARCH" == "x86_64" ]] && ARCH="amd64" || ARCH="arm64"
+        curl -L -o "$CLOUDFLARED_PATH" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
+        chmod +x "$CLOUDFLARED_PATH"
     fi
 }
 
-save_persistent_info() {
-    if [ -n "$UUID_DIRECT" ] && [ -n "$ARGO_PORT" ]; then
-        mkdir -p "$(dirname "$PERSISTENT_INFO_FILE")"
-        cat > "$PERSISTENT_INFO_FILE" <<EOF
+# --- WARP 账户申请逻辑 ---
+setup_warp() {
+    info "申请 WARP 账户并获取落地配置..."
+    local PRIV=$(wg genkey)
+    local PUB=$(echo "$PRIV" | wg pubkey)
+    local RESP=$(curl -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
+    
+    WARP_PRIVATE_KEY="$PRIV"
+    WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
+    WARP_ADDRESS=$(echo "$RESP" | jq -r '.config.interface.addresses.v4' | sed 's/\/.*//g')
+    
+    # 提取并转换 Reserved 字节 (Xray 落地关键)
+    local CLIENT_ID=$(echo "$RESP" | jq -r '.config.clientId' | tr -d '"')
+    if [ -n "$CLIENT_ID" ] && [ "$CLIENT_ID" != "null" ]; then
+        WARP_RESERVED=$(echo "$CLIENT_ID" | base64 -d | xxd -p | sed 's/../0x&,/g' | sed 's/,$//')
+        WARP_RESERVED="[${WARP_RESERVED}]"
+    else
+        WARP_RESERVED="[0,0,0]"
+    fi
+}
+
+# --- 生成配置文件 ---
+create_configs() {
+    mkdir -p "$XRAY_CONFIG_DIR"
+    cat > "$XRAY_CONFIG_FILE" <<EOF
+{
+  "log": { "loglevel": "error" },
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      { "type": "field", "user": ["user-direct"], "outboundTag": "direct" },
+      { "type": "field", "user": ["user-warp"], "outboundTag": "warp" },
+      { "type": "field", "protocol": ["dns"], "outboundTag": "direct" }
+    ]
+  },
+  "inbounds": [
+    {
+      "port": ${ARGO_PORT},
+      "listen": "127.0.0.1",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          { "id": "${UUID_DIRECT}", "email": "user-direct" },
+          { "id": "${UUID_WARP}", "email": "user-warp" }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": { "path": "${ARGO_PATH}" }
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" },
+    {
+      "protocol": "wireguard",
+      "tag": "warp",
+      "settings": {
+        "secretKey": "${WARP_PRIVATE_KEY}",
+        "address": ["${WARP_ADDRESS}/32"],
+        "peers": [
+          {
+            "publicKey": "${WARP_PEER_PUBLIC_KEY}",
+            "endpoint": "engage.cloudflareclient.com:2408"
+          }
+        ],
+        "reserved": ${WARP_RESERVED}
+      }
+    },
+    { "protocol": "blackhole", "tag": "block" }
+  ]
+}
+EOF
+}
+
+# --- 创建 Systemd 服务 ---
+create_services() {
+    cat > "$XRAY_SERVICE_FILE" <<EOF
+[Unit]
+Description=Xray Service
+After=network.target
+[Service]
+ExecStart=${XRAY_PATH} run -c ${XRAY_CONFIG_FILE}
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cat > "$ARGO_SERVICE_FILE" <<EOF
+[Unit]
+Description=Argo Tunnel
+After=network.target
+[Service]
+ExecStart=${CLOUDFLARED_PATH} tunnel --url http://127.0.0.1:${ARGO_PORT} --no-autoupdate
+Restart=always
+RestartSec=5
+StandardOutput=append:${ARGO_LOG_FILE}
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xray argo >/dev/null 2>&1
+    systemctl restart xray argo
+}
+
+# --- 节点展示逻辑 ---
+display_nodes() {
+    if [ ! -f "$PERSISTENT_INFO_FILE" ]; then
+        error "未发现安装记录。"
+        return
+    fi
+    source "$PERSISTENT_INFO_FILE"
+
+    info "正在从日志解析 Argo 域名 (约需 5-10 秒)..."
+    local ARGO_DOMAIN=""
+    local count=0
+    while [ $count -lt 12 ]; do
+        ARGO_DOMAIN=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare.com' "$ARGO_LOG_FILE" | head -n 1 | sed 's/https:\/\///')
+        [ -n "$ARGO_DOMAIN" ] && break
+        echo -n "."
+        sleep 1
+        ((count++))
+    done
+    echo
+
+    if [ -z "$ARGO_DOMAIN" ]; then
+        error "Argo 域名获取失败。请检查日志: cat $ARGO_LOG_FILE"
+        return
+    fi
+
+    echo -e "\n${MAGENTA}====================================================${NC}"
+    echo -e "${CYAN}   Xray Argo 隧道节点列表 (Warp已启用)   ${NC}"
+    echo -e "${MAGENTA}====================================================${NC}"
+    echo -e "${YELLOW}Argo 临时域名: ${ARGO_DOMAIN}${NC}"
+    echo
+    
+    # 生成直连节点 (UUID_DIRECT)
+    echo -e "${GREEN}>>> 类型1：优选 IP (走 Direct 直连)${NC}"
+    for ip in "${CF_IPS[@]}"; do
+        echo -e "vless://${UUID_DIRECT}@${ip}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}#Argo_Direct_${ip}"
+    done
+    echo
+
+    # 生成 WARP 节点 (UUID_WARP)
+    echo -e "${GREEN}>>> 类型2：优选域名 (走 Warp 落地)${NC}"
+    echo -e "vless://${UUID_WARP}@${CF_DOMAIN}:443?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}#Argo_Warp_落地"
+    echo -e "\n${CYAN}提示：连接后缀为 '落地' 的节点，IP 将显示为 Cloudflare WARP IP。${NC}"
+}
+
+# --- 菜单功能实现 ---
+install_argo_xray() {
+    force_cleanup
+    check_dependencies
+    install_cores
+    setup_warp
+
+    ARGO_PORT=$(shuf -i 10000-60000 -n 1)
+    UUID_DIRECT=$(xray uuid)
+    UUID_WARP=$(xray uuid)
+
+    # 持久化存储
+    cat > "$PERSISTENT_INFO_FILE" <<EOF
 ARGO_PORT="${ARGO_PORT}"
 UUID_DIRECT="${UUID_DIRECT}"
 UUID_WARP="${UUID_WARP}"
@@ -80,399 +263,62 @@ WARP_PEER_PUBLIC_KEY="${WARP_PEER_PUBLIC_KEY}"
 WARP_ADDRESS="${WARP_ADDRESS}"
 WARP_RESERVED="${WARP_RESERVED}"
 EOF
-    fi
+
+    create_configs
+    create_services
+    success "安装/重置完成！"
+    display_nodes
 }
 
-check_root() {
-    if [ "$(id -u)" -ne 0 ]; then error "需 root 权限运行。"; exit 1; fi
-}
-
-force_cleanup() {
-    info "正在执行环境清理..."
-    
-    # 停止服务
-    for svc in sing-box argo hy2-nat; do
-        if systemctl list-units --full -all | grep -q "$svc.service"; then
-            systemctl stop $svc
-            systemctl disable $svc >/dev/null 2>&1
-        fi
-    done
-
-    # 清理残留进程
-    local sb_pid=$(pgrep -f "^${SINGBOX_INSTALL_PATH_EXPECTED}")
-    [ -n "$sb_pid" ] && kill -9 $sb_pid
-    
-    local cf_pid=$(pgrep -f "^${CLOUDFLARED_PATH}")
-    [ -n "$cf_pid" ] && kill -9 $cf_pid
-
-    # 清理旧版残留
+restart_and_refresh() {
+    info "强制重启服务以刷新域名..."
+    # 核心逻辑：必须先杀掉 cloudflared 进程并清空日志
+    pkill -9 cloudflared 2>/dev/null
     rm -f "$ARGO_LOG_FILE"
-    rm -f "$ARGO_SERVICE_FILE"
-    
-    # 清理 Hy2 可能存在的残留
-    rm -rf "/etc/hysteria"
-    rm -rf "${SINGBOX_CONFIG_DIR}/cert" 
-
-    sleep 1
-    success "环境清理完成。"
+    systemctl restart xray argo
+    display_nodes
 }
 
-check_dependencies() {
-    local deps=("curl" "openssl" "jq" "lsof" "cron" "wireguard-tools")
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &>/dev/null; then
-            info "安装依赖: $dep ..."
-            if command -v apt-get &>/dev/null; then
-                apt-get update -y && apt-get install -y "$dep"
-            elif command -v yum &>/dev/null; then
-                yum install -y "$dep"
-            fi
-        fi
-    done
-}
-
-find_and_set_singbox_cmd() {
-    if [ -x "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then
-        SINGBOX_CMD="$SINGBOX_INSTALL_PATH_EXPECTED"
-    else
-        SINGBOX_CMD=""
-    fi
-}
-
-get_server_ip() {
-    IPV4_ADDR=$(curl -s4m5 https://icanhazip.com -k || curl -s4m5 ip.sb -k 2>/dev/null)
-    IPV6_ADDR=$(curl -s6m5 https://icanhazip.com -k || curl -s6m5 ip.sb -k 2>/dev/null)
-}
-
-install_cloudflared() {
-    if [ -f "$CLOUDFLARED_PATH" ]; then return 0; fi
-    info "安装 Cloudflared..."
-    local ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64) ARCH="amd64" ;;
-        aarch64) ARCH="arm64" ;;
-        *) error "架构不支持: $ARCH"; exit 1 ;;
-    esac
-    
-    local URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}"
-    curl -L -o "$CLOUDFLARED_PATH" "$URL" || wget -O "$CLOUDFLARED_PATH" "$URL"
-    
-    if [ ! -f "$CLOUDFLARED_PATH" ]; then error "Cloudflared 下载失败"; exit 1; fi
-    chmod +x "$CLOUDFLARED_PATH"
-}
-
-create_argo_service() {
-    info "配置 Argo 系统服务..."
-    echo "" > "$ARGO_LOG_FILE"
-    chmod 666 "$ARGO_LOG_FILE"
-
-    cat > "$ARGO_SERVICE_FILE" <<EOF
-[Unit]
-Description=Cloudflared Argo Tunnel
-After=network.target sing-box.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=${CLOUDFLARED_PATH} tunnel --url http://127.0.0.1:${ARGO_PORT} --edge-ip-version auto --no-autoupdate --protocol http2 --retries 10
-Restart=always
-RestartSec=5s
-StandardOutput=append:${ARGO_LOG_FILE}
-StandardError=inherit
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable argo >/dev/null 2>&1
-    systemctl restart argo
-    
-    sleep 2
-    if systemctl is-active --quiet argo; then
-        success "Argo 服务启动成功！"
-    else
-        error "Argo 服务启动失败，请检查日志。"
-        return 1
-    fi
-}
-
-wait_for_argo_connection() {
-    info "等待 Argo 隧道连接 (最多30秒)..."
-    local timeout=30
-    local elapsed=0
-    while [ $elapsed -lt $timeout ]; do
-        if grep -q "Registered tunnel connection" "$ARGO_LOG_FILE"; then
-            success "Argo 隧道连接成功！"
-            return 0
-        fi
-        sleep 1
-        ((elapsed++))
-        echo -ne "."
-    done
-    echo ""
-    error "Argo 连接超时。请运行 'cat $ARGO_LOG_FILE' 查看详情。"
-    return 1
-}
-
-install_singbox_core() {
-    if [ -f "$SINGBOX_INSTALL_PATH_EXPECTED" ]; then find_and_set_singbox_cmd; return 0; fi
-    info "安装 Sing-box..."
-    local latest_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
-    [ -z "$latest_tag" ] || [ "$latest_tag" == "null" ] && latest_tag="v1.11.1"
-    
-    local ARCH
-    case "$(uname -m)" in
-        x86_64) ARCH="amd64" ;;
-        aarch64) ARCH="arm64" ;;
-        *) error "架构不支持"; exit 1 ;;
-    esac
-    
-    local ver=${latest_tag#v}
-    local url="https://github.com/SagerNet/sing-box/releases/download/${latest_tag}/sing-box-${ver}-linux-${ARCH}.tar.gz"
-    local tmp_dir=$(mktemp -d)
-    curl -L -o "${tmp_dir}/sing-box.tar.gz" "$url" || { error "Sing-box 下载失败"; exit 1; }
-    
-    tar -xzf "${tmp_dir}/sing-box.tar.gz" -C "$tmp_dir"
-    install -m 755 "${tmp_dir}/sing-box-${ver}-linux-${ARCH}/sing-box" "$SINGBOX_INSTALL_PATH_EXPECTED"
-    rm -rf "$tmp_dir"
-    find_and_set_singbox_cmd
-}
-
-setup_warp() {
-    if [ -n "$WARP_PRIVATE_KEY" ]; then return 0; fi
-    info "配置 WARP 账户..."
-    
-    local PRIV=$(wg genkey)
-    local PUB=$(echo "$PRIV" | wg pubkey)
-    local RESP=$(curl -s -X POST -H "Content-Type: application/json" --data "{\"key\":\"${PUB}\",\"type\":\"Android\",\"model\":\"PC\"}" https://api.cloudflareclient.com/v0a2158/reg)
-    
-    WARP_PRIVATE_KEY="$PRIV"
-    WARP_PEER_PUBLIC_KEY=$(echo "$RESP" | jq -r '.config.peers[0].public_key')
-    WARP_ADDRESS=$(echo "$RESP" | jq -r '.config.interface.addresses.v4' | sed 's/\/.*//g')
-    WARP_RESERVED="[0,0,0]"
-
-    if [[ -z "$WARP_ADDRESS" || "$WARP_ADDRESS" == "null" ]]; then
-        warn "WARP 注册失败。"
-        WARP_ADDRESS=""
-    fi
-}
-
-create_config_json() {
-    find_and_set_singbox_cmd
-    mkdir -p "$SINGBOX_CONFIG_DIR"
-
-    local HAS_WARP=false
-    if [ -n "$WARP_ADDRESS" ]; then HAS_WARP=true; fi
-
-    cat > "$SINGBOX_CONFIG_FILE" <<EOF
-{
-  "log": { "level": "error", "timestamp": true },
-  "dns": {
-    "servers": [
-      { "tag": "dns-remote", "type": "udp", "server": "1.1.1.1" }
-    ]
-  },
-EOF
-
-    if [ "$HAS_WARP" = true ]; then
-        cat >> "$SINGBOX_CONFIG_FILE" <<EOF
-  "endpoints": [
-    {
-      "type": "wireguard",
-      "tag": "warp-out","mtu": 1280,
-      "address": [ "${WARP_ADDRESS}/32" ],
-      "private_key": "${WARP_PRIVATE_KEY}",
-      "peers": [
-        {
-          "address": "engage.cloudflareclient.com",
-          "port": 2408,
-          "public_key": "${WARP_PEER_PUBLIC_KEY}",
-          "allowed_ips": ["0.0.0.0/0"],"persistent_keepalive_interval": 25,
-          "reserved": ${WARP_RESERVED}
-        }
-      ]
-    }
-  ],
-EOF
-    fi
-
-    # 注意：这里配置了两个用户，分别对应 Direct 和 Warp 的分流
-    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
-  "inbounds": [
-    {
-      "type": "vless",
-      "tag": "vless-argo",
-      "listen": "127.0.0.1",
-      "listen_port": ${ARGO_PORT},
-      "users": [ 
-        { "uuid": "${UUID_DIRECT}", "name": "user-direct" },
-        { "uuid": "${UUID_WARP}", "name": "user-warp" }
-      ],
-      "transport": { "type": "ws", "path": "${ARGO_PATH}","max_early_data": 2048,"early_data_header_name": "Sec-WebSocket-Protocol" }
-    }
-  ],
-  "outbounds": [
-    { "type": "direct", "tag": "direct" }
-  ],
-  "route": {
-    "rules": [
-      { "action": "sniff" },
-      { "protocol": "dns", "action": "hijack-dns" },
-      { "user": ["user-direct"], "outbound": "direct" },
-EOF
-    
-    if [ "$HAS_WARP" = true ]; then
-        echo '      { "user": ["user-warp"], "outbound": "warp-out" },' >> "$SINGBOX_CONFIG_FILE"
-    else
-        # 如果 Warp 失败，Warp 用户也走直连
-        echo '      { "user": ["user-warp"], "outbound": "direct" },' >> "$SINGBOX_CONFIG_FILE"
-    fi
-    
-    cat >> "$SINGBOX_CONFIG_FILE" <<EOF
-      { "inbound": "vless-argo", "outbound": "direct" }
-    ],
-    "default_domain_resolver": "dns-remote"
-  }
-}
-EOF
-}
-
-create_systemd_service() {
-    cat > "$SINGBOX_SERVICE_FILE" <<EOF
-[Unit]
-Description=Sing-Box Service
-After=network.target
-[Service]
-User=root
-WorkingDirectory=${SINGBOX_CONFIG_DIR}
-ExecStart=${SINGBOX_CMD} run -c ${SINGBOX_CONFIG_FILE}
-Restart=on-failure
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable sing-box
-}
-
-display_and_store_config_info() {
-    load_persistent_info
-    
-    echo -e "${MAGENTA}====================================================${NC}"
-    local WARP_STATUS=""
-    [ -n "$WARP_ADDRESS" ] && WARP_STATUS="(Warp已启用)" || WARP_STATUS="(无Warp)"
-    echo -e "${CYAN}   Argo 隧道节点列表 ${WARP_STATUS}   ${NC}"
-    
-    local ARGO_DOMAIN=""
-    # 尝试从日志抓取临时域名
-    if [ -f "$ARGO_LOG_FILE" ]; then
-        ARGO_DOMAIN=$(grep -a "trycloudflare.com" "$ARGO_LOG_FILE" | tail -n 10 | grep -o 'https://.*trycloudflare.com' | sed 's/https:\/\///' | head -n 1)
-    fi
-    
-    if [ -n "$ARGO_DOMAIN" ]; then
-        echo
-        local FIXED_PORT=443
-
-        # 1. 生成直连节点 (优选IP -> UUID_DIRECT)
-        echo -e "${GREEN}>>> 类型1：优选 IP (走 Direct 直连)${NC}"
-        for current_ip in "${CF_IPS[@]}"; do
-            local link="vless://${UUID_DIRECT}@${current_ip}:${FIXED_PORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-Direct-${current_ip}"
-            echo -e "${YELLOW}IP:${current_ip}${NC}"
-            echo -e "${link}"
-            echo
-        done
-
-        # 2. 生成 Warp 节点 (优选域名 -> UUID_WARP)
-        echo -e "${GREEN}>>> 类型2：优选域名 (走 Warp 出站)${NC}"
-        local link_warp="vless://${UUID_WARP}@${CF_DOMAIN}:${FIXED_PORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-Warp-${CF_DOMAIN}"
-        echo -e "${YELLOW}Domain:${CF_DOMAIN}${NC}"
-        echo -e "${link_warp}"
-        echo
-        
-    else
-        error "Argo 域名获取失败，请检查日志。"
-    fi
-}
-
-install_all_nodes() {
-    force_cleanup
-    check_dependencies
-    install_singbox_core
-    install_cloudflared
-    setup_warp
-
-    ARGO_PORT=$(shuf -i 10000-65535 -n 1)
-    UUID_DIRECT=$($SINGBOX_CMD generate uuid)
-    UUID_WARP=$($SINGBOX_CMD generate uuid) 
-    
-    save_persistent_info
-
-    create_config_json
-    if ! $SINGBOX_CMD check -c "$SINGBOX_CONFIG_FILE"; then
-        error "配置生成有误。"; exit 1
-    fi
-
-    create_systemd_service
-    systemctl restart sing-box
-    sleep 2
-    if ! systemctl is-active --quiet sing-box; then
-        error "Sing-box 启动失败。"; exit 1
-    fi
-    
-    create_argo_service
-    
-    if wait_for_argo_connection; then
-        display_and_store_config_info
-    fi
-}
-
-uninstall_singbox() {
-    read -p "确定卸载? (y/N): " confirm
+uninstall_xray_argo() {
+    read -p "确定要深度卸载吗？此操作将清除所有文件和配置 (y/N): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         force_cleanup
-        rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_CMD"
-        rm -rf "$SINGBOX_CONFIG_DIR"
-        rm -f "$CLOUDFLARED_PATH"
-        success "已卸载。"
+        rm -f "$XRAY_SERVICE_FILE" "$ARGO_SERVICE_FILE"
+        rm -f "$XRAY_PATH" "$CLOUDFLARED_PATH"
+        rm -rf "$XRAY_CONFIG_DIR" "$XRAY_SHARE_DIR"
+        systemctl daemon-reload
+        systemctl reset-failed
+        success "卸载完成，环境已恢复纯净。"
     fi
 }
 
-restart_all_services() {
-    info "正在重启服务..."
-    load_persistent_info
-    systemctl restart sing-box
-    echo "" > "$ARGO_LOG_FILE"
-    systemctl restart argo
-    
-    if ! systemctl is-active --quiet sing-box; then
-        error "Sing-box 重启失败！"
-        return 1
-    fi
-    
-    if wait_for_argo_connection; then
-        display_and_store_config_info
-    fi
-}
-
+# --- 主菜单 ---
 show_menu() {
     clear
-    print_author_info
-    echo "1. 安装/重置 (纯净Argo版)"
-    echo "2. 查看节点 (Direct/Warp)"
-    echo "3. 重启服务 (换域名)"
-    echo "4. 卸载"
-    echo "0. 退出"
-    read -p "选择: " choice
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "${CYAN}     Xray Argo 专用版 (Direct/Warp 分流)     ${NC}"
+    echo -e "${MAGENTA}================================================${NC}"
+    echo -e "1. 安装/重置 (纯净Argo版)"
+    echo -e "2. 查看节点 (Direct/Warp)"
+    echo -e "3. 重启服务 (换域名)"
+    echo -e "4. 卸载"
+    echo -e "0. 退出"
+    echo -e "------------------------------------------------"
+    read -p "请选择: " choice
     case "$choice" in
-        1) install_all_nodes ;;
-        2) display_and_store_config_info ;;
-        3) restart_all_services ;;
-        4) uninstall_singbox ;;
+        1) install_argo_xray ;;
+        2) display_nodes ;;
+        3) restart_and_refresh ;;
+        4) uninstall_xray_argo ;;
         0) exit 0 ;;
-        *) echo "无效" ;;
+        *) echo "无效选项" ;;
     esac
-    read -p "按回车继续..."
+    echo
+    read -p "按回车键返回主菜单..." dummy
 }
 
+# --- 脚本入口 ---
 check_root
-while true; do show_menu; done
+while true; do
+    show_menu
+done
