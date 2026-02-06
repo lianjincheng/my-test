@@ -95,8 +95,10 @@ install_binaries() {
 }
 
 setup_warp() {
-    [[ -n "$WARP_PRIVATE_KEY" && "$WARP_PRIVATE_KEY" != "null" ]] && return 0
-    
+    if [[ -n "$WARP_PRIVATE_KEY" && -n "$WARP_PEER_PUBLIC_KEY" && -n "$WARP_ADDRESS" ]]; then
+    return 0
+    fi
+
     info "正在注册 WARP 账户..."
     local PRIV=$(wg genkey)
     local PUB=$(echo "$PRIV" | wg pubkey)
@@ -224,9 +226,15 @@ install_all() {
     fi
     
     create_xray_config
-    create_services
-    success "安装并启动完成！"
-    display_nodes
+    # 自动校验配置
+    if $XRAY_PATH run -test -c "$XRAY_CONFIG_FILE" &>/dev/null; then
+        create_services
+        success "安装并启动完成！"
+        display_nodes
+    else
+        error "配置文件校验失败，请检查逻辑！"
+        $XRAY_PATH run -test -c "$XRAY_CONFIG_FILE"
+    fi
 }
 
 reset_argo() {
