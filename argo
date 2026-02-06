@@ -198,8 +198,11 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable xray argo
-    systemctl restart xray argo
+    systemctl enable xray
+    systemctl enable argo
+    systemctl restart xray
+    systemctl restart argo
+
 }
 
 install_all() {
