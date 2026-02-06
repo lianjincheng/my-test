@@ -151,13 +151,14 @@ create_xray_config() {
     }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct" },
+    { "protocol": "freedom", "tag": "direct","settings": {"domainStrategy": "UseIPv4"}},
     {
       "protocol": "wireguard",
       "tag": "warp",
       "settings": {
         "secretKey": "${WARP_PRIVATE_KEY}",
         "address": ["${WARP_ADDRESS}/32"],
+        "mtu": 1280,
         "peers": [
           {
             "publicKey": "${WARP_PEER_PUBLIC_KEY}",
