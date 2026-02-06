@@ -264,7 +264,7 @@ display_nodes() {
     local ARGO_DOMAIN=""
     while [ $count -lt 15 ]; do
         if [ -f "$ARGO_LOG_FILE" ]; then
-            ARGO_DOMAIN=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare.com' "$ARGO_LOG_FILE" | head -n 1 | sed 's/https:\/\///')
+            ARGO_DOMAIN=$(grep -o 'https://[a-zA-Z0-9.-]*\.trycloudflare.com' "$ARGO_LOG_FILE" | tail -n 1 | sed 's/https:\/\///')
         fi
         if [[ -n "$ARGO_DOMAIN" ]]; then break; fi
         sleep 2
