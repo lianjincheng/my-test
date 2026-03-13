@@ -273,7 +273,6 @@ install_node() {
   "routing": {
     "domainStrategy": "IPOnDemand",
     "rules": [
-      {"type": "field","outboundTag": "block","ip":["geoip:cn"]},
       {"type": "field","outboundTag": "block","domain": ["geosite:cn"]},
       { "inboundTag": ["dokodemo-in"], "domain": ["$REALITY_SNI"], "outboundTag": "direct-v4" },
       { "inboundTag": ["dokodemo-in"], "outboundTag": "block" },
