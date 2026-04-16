@@ -19,7 +19,7 @@ PERSISTENT_INFO_FILE="${XRAY_CONFIG_DIR}/.xray_argo_info"
 
 # Fixed Addresses (优选)
 CF_IPS=("8.223.63.150" "34.143.159.175")
-CF_DOMAIN="yg1.ygkkk.dpdns.org"
+CF_DOMAIN="yg9.ygkkk.dpdns.org"
 
 # --- Colors ---
 RED='\033[0;31m'
