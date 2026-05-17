@@ -141,8 +141,8 @@ install_node() {
     fi
 
     local KEY_PAIR=$("$XRAY_BIN" x25519)
-    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep "PrivateKey" | awk '{print $2}' | tr -d '\n\r')
-    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep "Password" | awk '{print $2}' | tr -d '\n\r')
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | grep -iE "Private[ Kk]*ey" | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\n\r')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | grep -iE "Public[ Kk]*ey|Password" | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\n\r')
     SHORT_ID=$(openssl rand -hex 4 | tr -d '\n\r')
     REALITY_SNI="$DEFAULT_REALITY_SNI"
 
