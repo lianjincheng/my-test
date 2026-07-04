@@ -259,7 +259,6 @@ install_node() {
     cat > "$CONFIG_FILE" <<EOF
 {
   "log": { "loglevel": "error" },
-  "dns": { "servers": ["1.1.1.1", "8.8.8.8"] },
   "inbounds": [
     $INBOUND_DOKODEMO
     $INBOUND_V4
