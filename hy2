@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-#  Hysteria 2 双进程物理隔离版 (Pro V20 - Reborn)
+#  Hysteria 2 双进程物理隔离版 (Pro V22 - 终极完美版)
 #  基于最新 hy2 协议重构，支持 pinSHA256 & 修复 v2.9.0 Bug
 #  特性:
-#    1. IPv4 进程: 监听 v4 IP -> mode: 4 -> v4(all)
-#    2. IPv6 进程: 监听 v6 IP -> mode: 6 -> v6(all)
+#    1. IPv4/IPv6 完全双栈隔离，分别使用独立的随机端口
+#    2. 修复: IPv6 节点专属 IPv6 DNS解析，告别 4 秒超时卡顿
 #    3. 修复: 增加 IP 正则清洗，防止 HTML 代码注入配置文件
 #    4. 新增: 官方 hysteria cert 生成并强制设定 sniGuard: disable
 # =========================================================
@@ -85,7 +85,7 @@ install_kernel() {
     if [ ! -f "$BIN_PATH" ]; then error "下载失败！"; exit 1; fi; chmod +x "$BIN_PATH"; success "内核安装完成。"
 }
 
-# --- 4. 证书与伪装 (核心修改: hysteria cert & 提取 pinSHA256) ---
+# --- 4. 证书与伪装 ---
 generate_cert() {
     mkdir -p "$CONFIG_DIR" "$FALLBACK_DIR"
     
@@ -123,7 +123,7 @@ EOF
     fi
 }
 
-# --- 5. 生成配置文件 (核心修改: 增加 sniGuard: disable) ---
+# --- 5. 生成配置文件 ---
 create_config() {
     info "正在获取并校验 IP 地址..."
     
@@ -138,7 +138,13 @@ create_config() {
     echo -e "  IPv4: ${GREEN}${IPV4:-无}${NC}"
     echo -e "  IPv6: ${GREEN}${IPV6:-无}${NC}"
 
-    PORT=$(shuf -i 10000-65534 -n 1)
+    # 生成双端口，并确保端口不重复
+    PORT_V4=$(shuf -i 10000-65534 -n 1)
+    PORT_V6=$(shuf -i 10000-65534 -n 1)
+    while [ "$PORT_V4" = "$PORT_V6" ]; do
+        PORT_V6=$(shuf -i 10000-65534 -n 1)
+    done
+
     AUTH_PASS=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
     # 生成混淆密码
     OBFS_PASS=$(openssl rand -hex 16)
@@ -147,7 +153,7 @@ create_config() {
     if [ -n "$IPV4" ]; then
         info "生成 IPv4 配置..."
 cat > "$CONFIG_V4" <<EOF
-listen: "$IPV4:$PORT"
+listen: "$IPV4:$PORT_V4"
 tls:
   cert: $CERT_FILE
   key: $KEY_FILE
@@ -192,11 +198,11 @@ acl:
 EOF
     fi
 
-    # === IPv6 配置 ===
+    # === IPv6 配置 (已修复纯IPv6 DNS问题) ===
     if [ -n "$IPV6" ]; then
         info "生成 IPv6 配置..."
 cat > "$CONFIG_V6" <<EOF
-listen: "[$IPV6]:$PORT"
+listen: "[$IPV6]:$PORT_V6"
 tls:
   cert: $CERT_FILE
   key: $KEY_FILE
@@ -219,7 +225,7 @@ ignoreClientBandwidth: true
 resolver:
   type: udp
   udp:
-    addr: 1.1.1.1:53
+    addr: "[2606:4700:4700::1111]:53"
     timeout: 4s
 sniff:
   enable: true
@@ -230,14 +236,6 @@ masquerade:
   type: file
   file:
     dir: $FALLBACK_DIR
-outbounds:
-  - name: v6
-    type: direct
-    direct:
-      mode: 6
-acl:
-  inline: |
-    v6(all)
 EOF
     fi
 }
@@ -300,10 +298,12 @@ EOF
     fi
 }
 
-# --- 7. 输出信息 (核心修改: 换用 pinSHA256 生成链接) ---
+# --- 7. 输出信息 ---
 show_info() {
-    [ -f "$CONFIG_V4" ] && PORT=$(grep "listen:" $CONFIG_V4 | awk -F ':' '{print $NF}' | tr -d '" ')
-    [ -f "$CONFIG_V6" ] && [ -z "$PORT" ] && PORT=$(grep "listen:" $CONFIG_V6 | awk -F ']:' '{print $2}' | tr -d '" ')
+    PORT_V4=""
+    PORT_V6=""
+    [ -f "$CONFIG_V4" ] && PORT_V4=$(grep "listen:" "$CONFIG_V4" | awk -F ':' '{print $NF}' | tr -d '" ')
+    [ -f "$CONFIG_V6" ] && PORT_V6=$(grep "listen:" "$CONFIG_V6" | awk -F ':' '{print $NF}' | tr -d '" ')
     
     [ -f "$CONFIG_V4" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V4 | grep "password:" | awk '{print $2}')
     [ -f "$CONFIG_V6" ] && [ -z "$PASS" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V6 | grep "password:" | awk '{print $2}')
@@ -316,22 +316,20 @@ show_info() {
     [ -f "$CONFIG_V4" ] && IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
     [ -f "$CONFIG_V6" ] && IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/^\[//;s/\]:.*//')
     
-    # 获取或计算 pinSHA256
     PINSHA=""
     if [ -f "$CONFIG_DIR/pinsha256.txt" ]; then
         PINSHA=$(cat "$CONFIG_DIR/pinsha256.txt")
     elif [ -f "$CERT_FILE" ]; then
-        # 兼容处理：如果没有文件，动态提取哈希
         PINSHA=$(openssl x509 -in "$CERT_FILE" -outform der 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | base64)
     fi
 
-    # 对 base64 的特殊符号 URL 编码，防止部分客户端解析链接失效
     URL_PINSHA=$(echo -n "$PINSHA" | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
 
     echo -e "${YELLOW}===============================================${NC}"
     echo -e "${GREEN}      Hysteria 2 双栈隔离版 (运行信息)      ${NC}"
     echo -e "${YELLOW}===============================================${NC}"
-    echo -e "端口       : ${CYAN}${PORT}${NC}"
+    [ -n "$PORT_V4" ] && echo -e "IPv4 端口  : ${CYAN}${PORT_V4}${NC}"
+    [ -n "$PORT_V6" ] && echo -e "IPv6 端口  : ${CYAN}${PORT_V6}${NC}"
     echo -e "认证密码   : ${CYAN}${PASS}${NC}"
     echo -e "混淆密码   : ${CYAN}${OBFS}${NC} (Salamander)"
     echo -e "pinSHA256  : ${CYAN}${PINSHA}${NC}"
@@ -340,18 +338,18 @@ show_info() {
     echo -e "${YELLOW}-----------------------------------------------${NC}"
 
     LINK_BASE="hysteria2://$PASS@"
-    # 使用新版分享标准
-    LINK_PARAMS=":$PORT?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
 
-    if [ -n "$IPV4" ]; then
+    if [ -n "$IPV4" ] && [ -n "$PORT_V4" ]; then
+        LINK_PARAMS_V4=":$PORT_V4?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 1 [IPv4]:"
-        echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS}#Hy2-IPv4${NC}"
+        echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS_V4}#Hy2-IPv4${NC}"
         echo
     fi
 
-    if [ -n "$IPV6" ]; then
+    if [ -n "$IPV6" ] && [ -n "$PORT_V6" ]; then
+        LINK_PARAMS_V6=":$PORT_V6?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 2 [IPv6]:"
-        echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS}#Hy2-IPv6${NC}"
+        echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS_V6}#Hy2-IPv6${NC}"
         echo
     fi
     echo -e "${YELLOW}===============================================${NC}"
@@ -362,25 +360,25 @@ install() { cleanup_environment install; install_dependencies; install_kernel; g
 
 change_port() {
     if [ ! -f "$CONFIG_V4" ] && [ ! -f "$CONFIG_V6" ]; then error "未安装"; return; fi
-    NEW_PORT=$(shuf -i 10000-65534 -n 1)
     
     if [ -f "$CONFIG_V4" ]; then
-        IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
-        sed -i "s/^listen: .*/listen: \"$IPV4:$NEW_PORT\"/" $CONFIG_V4
+        NEW_PORT_V4=$(shuf -i 10000-65534 -n 1)
+        sed -i -E "s/listen: \"(.*):[0-9]+\"/listen: \"\1:$NEW_PORT_V4\"/" $CONFIG_V4
         systemctl restart hysteria-v4
+        success "IPv4 端口已修改为: $NEW_PORT_V4"
     fi
     if [ -f "$CONFIG_V6" ]; then
-        IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/:.*//')
-        sed -i "s/^listen: .*/listen: \"$IPV6:$NEW_PORT\"/" $CONFIG_V6
+        NEW_PORT_V6=$(shuf -i 10000-65534 -n 1)
+        sed -i -E "s/listen: \"(.*):[0-9]+\"/listen: \"\1:$NEW_PORT_V6\"/" $CONFIG_V6
         systemctl restart hysteria-v6
+        success "IPv6 端口已修改为: $NEW_PORT_V6"
     fi
-    success "端口已修改为: $NEW_PORT"
     show_info
 }
 
 show_menu() {
-    clear; echo -e "${BLUE}=======================================${NC}"; echo -e "   Hysteria 2 双进程管理 (Pro V20)"; echo -e "${BLUE}=======================================${NC}"
-    echo -e "1. 安装 / 重置 (双栈物理隔离 + 原配置逻辑)"; echo "2. 查看 配置 & 链接"; echo "3. 修改 端口"; echo "4. 重启 服务"; echo "5. 彻底卸载"; echo "0. 退出"
+    clear; echo -e "${BLUE}=======================================${NC}"; echo -e "   Hysteria 2 双进程管理 (Pro V22)"; echo -e "${BLUE}=======================================${NC}"
+    echo -e "1. 安装 / 重置 (双栈物理隔离 + 独立双端口)"; echo "2. 查看 配置 & 链接"; echo "3. 修改 端口 (随机换新)"; echo "4. 重启 服务"; echo "5. 彻底卸载"; echo "0. 退出"
     echo -e "---------------------------------------"; read -p "请选择: " c
     case "$c" in
         1) install ;;
