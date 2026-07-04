@@ -2,11 +2,12 @@
 
 # =========================================================
 #  Hysteria 2 双进程物理隔离版 (Pro V20 - Reborn)
-#  基于 hy2.txt 重构，严格遵循用户指定的 ACL 写法
+#  基于最新 hy2 协议重构，支持 pinSHA256 & 修复 v2.9.0 Bug
 #  特性:
 #    1. IPv4 进程: 监听 v4 IP -> mode: 4 -> v4(all)
 #    2. IPv6 进程: 监听 v6 IP -> mode: 6 -> v6(all)
 #    3. 修复: 增加 IP 正则清洗，防止 HTML 代码注入配置文件
+#    4. 新增: 官方 hysteria cert 生成并强制设定 sniGuard: disable
 # =========================================================
 
 # --- 颜色定义 ---
@@ -68,7 +69,7 @@ install_dependencies() {
     done
 }
 
-# --- 3. 获取内核 (沿用 hy2.txt 逻辑) ---
+# --- 3. 获取内核 ---
 install_kernel() {
     if [ -f "$BIN_PATH" ]; then info "内核已存在，跳过下载"; return; fi
     info "下载 Hysteria 2 官方内核..."; local ARCH=$(uname -m)
@@ -84,11 +85,11 @@ install_kernel() {
     if [ ! -f "$BIN_PATH" ]; then error "下载失败！"; exit 1; fi; chmod +x "$BIN_PATH"; success "内核安装完成。"
 }
 
-# --- 4. 证书与伪装 ---
+# --- 4. 证书与伪装 (核心修改: hysteria cert & 提取 pinSHA256) ---
 generate_cert() {
     mkdir -p "$CONFIG_DIR" "$FALLBACK_DIR"
     
-    # 伪装文件 (hy2.txt 原版逻辑)
+    # 伪装文件
     if [ ! -f "$FALLBACK_DIR/index.html" ]; then
         info "生成防探测伪装页面..."
         cat > "$FALLBACK_DIR/index.html" <<EOF
@@ -98,17 +99,34 @@ EOF
 
     # 证书
     if [ ! -f "$CERT_FILE" ]; then
-        info "生成自签名证书 (CN=cdn.jsdelivr.net)..."
-        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "$KEY_FILE" -out "$CERT_FILE" -days 36500 -subj "/CN=cdn.jsdelivr.net" 2>/dev/null
-        chmod 644 "$CERT_FILE"; chmod 600 "$KEY_FILE"
+        info "使用 hysteria 原生命令生成证书..."
+        cd "$CONFIG_DIR" || exit 1
+        
+        # 运行自带生成指令并捕获日志以提取 pinSHA256
+        "$BIN_PATH" cert > "$CONFIG_DIR/cert_info.log" 2>&1
+        
+        chmod 644 "$CERT_FILE"
+        chmod 600 "$KEY_FILE"
+        
+        # 从日志提取原生 pinSHA256
+        PINSHA256=$(grep -oE 'pinSHA256:[[:space:]]*[A-Za-z0-9+/=]+' "$CONFIG_DIR/cert_info.log" | head -n1 | sed 's/pinSHA256:[[:space:]]*//')
+        
+        if [ -n "$PINSHA256" ]; then
+            echo "$PINSHA256" > "$CONFIG_DIR/pinsha256.txt"
+            success "自签名证书生成完成，提取 pinSHA256 成功"
+        else
+            warn "未能从日志提取，将通过 openssl 重新计算 pinSHA256..."
+            PINSHA256=$(openssl x509 -in "$CERT_FILE" -outform der 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | base64)
+            echo "$PINSHA256" > "$CONFIG_DIR/pinsha256.txt"
+            success "自签名证书生成完成，计算 pinSHA256 成功"
+        fi
     fi
 }
 
-# --- 5. 生成配置文件 (核心：严格照搬你的要求) ---
+# --- 5. 生成配置文件 (核心修改: 增加 sniGuard: disable) ---
 create_config() {
     info "正在获取并校验 IP 地址..."
     
-    # [修复] 增加 grep -Eo 正则过滤，防止 ip.sb 返回 HTML 乱码导致 YAML 报错
     IPV4=$(curl -s4m5 https://ip.sb -k | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1)
     if [ -z "$IPV4" ]; then IPV4=$(curl -s4m5 https://ifconfig.me -k | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1); fi
 
@@ -125,7 +143,7 @@ create_config() {
     # 生成混淆密码
     OBFS_PASS=$(openssl rand -hex 16)
 
-    # === IPv4 配置 (严格按照你的要求) ===
+    # === IPv4 配置 ===
     if [ -n "$IPV4" ]; then
         info "生成 IPv4 配置..."
 cat > "$CONFIG_V4" <<EOF
@@ -133,6 +151,7 @@ listen: "$IPV4:$PORT"
 tls:
   cert: $CERT_FILE
   key: $KEY_FILE
+  sniGuard: disable
 auth:
   type: password
   password: $AUTH_PASS
@@ -173,7 +192,7 @@ acl:
 EOF
     fi
 
-    # === IPv6 配置 (严格按照你的要求) ===
+    # === IPv6 配置 ===
     if [ -n "$IPV6" ]; then
         info "生成 IPv6 配置..."
 cat > "$CONFIG_V6" <<EOF
@@ -181,6 +200,7 @@ listen: "[$IPV6]:$PORT"
 tls:
   cert: $CERT_FILE
   key: $KEY_FILE
+  sniGuard: disable
 auth:
   type: password
   password: $AUTH_PASS
@@ -280,28 +300,33 @@ EOF
     fi
 }
 
-# --- 7. 输出信息 ---
+# --- 7. 输出信息 (核心修改: 换用 pinSHA256 生成链接) ---
 show_info() {
-    # 动态读取
     [ -f "$CONFIG_V4" ] && PORT=$(grep "listen:" $CONFIG_V4 | awk -F ':' '{print $NF}' | tr -d '" ')
     [ -f "$CONFIG_V6" ] && [ -z "$PORT" ] && PORT=$(grep "listen:" $CONFIG_V6 | awk -F ']:' '{print $2}' | tr -d '" ')
     
     [ -f "$CONFIG_V4" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V4 | grep "password:" | awk '{print $2}')
     [ -f "$CONFIG_V6" ] && [ -z "$PASS" ] && PASS=$(grep -A 2 "auth:" $CONFIG_V6 | grep "password:" | awk '{print $2}')
 
-    # 1. 尝试从 IPv4 配置文件提取混淆密码
     [ -f "$CONFIG_V4" ] && OBFS=$(grep -A 5 "obfs:" $CONFIG_V4 | grep "password:" | awk '{print $2}' | tr -d '"')
-    
-    # 2. 如果上面没提取到（例如机器只有 IPv6），则从 IPv6 配置文件提取
     if [ -z "$OBFS" ] && [ -f "$CONFIG_V6" ]; then
         OBFS=$(grep -A 5 "obfs:" $CONFIG_V6 | grep "password:" | awk '{print $2}' | tr -d '"')
     fi
 
-    # 从 bind 或 listen 中提取 IP
     [ -f "$CONFIG_V4" ] && IPV4=$(grep "listen:" $CONFIG_V4 | cut -d'"' -f2 | cut -d':' -f1)
     [ -f "$CONFIG_V6" ] && IPV6=$(grep "listen:" $CONFIG_V6 | cut -d'"' -f2 | sed 's/^\[//;s/\]:.*//')
     
-    L_SNI="cdn.jsdelivr.net"
+    # 获取或计算 pinSHA256
+    PINSHA=""
+    if [ -f "$CONFIG_DIR/pinsha256.txt" ]; then
+        PINSHA=$(cat "$CONFIG_DIR/pinsha256.txt")
+    elif [ -f "$CERT_FILE" ]; then
+        # 兼容处理：如果没有文件，动态提取哈希
+        PINSHA=$(openssl x509 -in "$CERT_FILE" -outform der 2>/dev/null | openssl dgst -sha256 -binary 2>/dev/null | base64)
+    fi
+
+    # 对 base64 的特殊符号 URL 编码，防止部分客户端解析链接失效
+    URL_PINSHA=$(echo -n "$PINSHA" | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
 
     echo -e "${YELLOW}===============================================${NC}"
     echo -e "${GREEN}      Hysteria 2 双栈隔离版 (运行信息)      ${NC}"
@@ -309,12 +334,14 @@ show_info() {
     echo -e "端口       : ${CYAN}${PORT}${NC}"
     echo -e "认证密码   : ${CYAN}${PASS}${NC}"
     echo -e "混淆密码   : ${CYAN}${OBFS}${NC} (Salamander)"
-    echo -e "伪装 SNI   : ${CYAN}${L_SNI}${NC}"
+    echo -e "pinSHA256  : ${CYAN}${PINSHA}${NC}"
+    echo -e "伪装验证   : ${CYAN}由 pin 特征码校验 (不再依赖 SNI)${NC}"
     echo -e "伪装模式   : ${CYAN}本地文件 (404 伪装)${NC}"
     echo -e "${YELLOW}-----------------------------------------------${NC}"
 
     LINK_BASE="hysteria2://$PASS@"
-    LINK_PARAMS=":$PORT?insecure=1&sni=$L_SNI&alpn=h3&obfs=salamander&obfs-password=$OBFS"
+    # 使用新版分享标准
+    LINK_PARAMS=":$PORT?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
 
     if [ -n "$IPV4" ]; then
         echo -e "节点 1 [IPv4]:"
