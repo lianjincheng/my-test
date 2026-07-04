@@ -173,28 +173,10 @@ quic:
   maxIdleTimeout: 30s
   disablePathMTUDiscovery: false
 ignoreClientBandwidth: true
-resolver:
-  type: udp
-  udp:
-    addr: 1.1.1.1:53
-    timeout: 4s
-sniff:
-  enable: true
-  rewriteDomain: false
-  tcpPorts: 80,443,8000-9000
-  udpPorts: all
 masquerade:
   type: file
   file:
     dir: $FALLBACK_DIR
-outbounds:
-  - name: v4
-    type: direct
-    direct:
-      mode: 4
-acl:
-  inline: |
-    v4(all)
 EOF
     fi
 
@@ -222,16 +204,6 @@ quic:
   maxIdleTimeout: 30s
   disablePathMTUDiscovery: false
 ignoreClientBandwidth: true
-resolver:
-  type: udp
-  udp:
-    addr: "[2606:4700:4700::1111]:53"
-    timeout: 4s
-sniff:
-  enable: true
-  rewriteDomain: false
-  tcpPorts: 80,443,8000-9000
-  udpPorts: all
 masquerade:
   type: file
   file:
@@ -340,14 +312,14 @@ show_info() {
     LINK_BASE="hysteria2://$PASS@"
 
     if [ -n "$IPV4" ] && [ -n "$PORT_V4" ]; then
-        LINK_PARAMS_V4=":$PORT_V4?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
+        LINK_PARAMS_V4=":$PORT_V4?insecure=0&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 1 [IPv4]:"
         echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS_V4}#Hy2-IPv4${NC}"
         echo
     fi
 
     if [ -n "$IPV6" ] && [ -n "$PORT_V6" ]; then
-        LINK_PARAMS_V6=":$PORT_V6?insecure=1&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
+        LINK_PARAMS_V6=":$PORT_V6?insecure=0&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 2 [IPv6]:"
         echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS_V6}#Hy2-IPv6${NC}"
         echo
