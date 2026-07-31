@@ -178,6 +178,11 @@ masquerade:
   type: file
   file:
     dir: $FALLBACK_DIR
+outbounds:
+  - name: v4_only
+    type: direct
+    direct:
+      mode: 4
 EOF
     fi
 
@@ -210,6 +215,11 @@ masquerade:
   type: file
   file:
     dir: $FALLBACK_DIR
+outbounds:
+  - name: v6_only
+    type: direct
+    direct:
+      mode: 6
 EOF
     fi
 }
