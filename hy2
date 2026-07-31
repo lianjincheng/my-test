@@ -182,7 +182,7 @@ outbounds:
   - name: v4_only
     type: direct
     direct:
-      mode: 4
+      mode: 46
 EOF
     fi
 
@@ -219,7 +219,7 @@ outbounds:
   - name: v6_only
     type: direct
     direct:
-      mode: 6
+      mode: 64
 EOF
     fi
 }
