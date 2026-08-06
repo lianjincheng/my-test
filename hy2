@@ -25,7 +25,7 @@ CONFIG_V4="${CONFIG_DIR}/config_v4.yaml"
 CONFIG_V6="${CONFIG_DIR}/config_v6.yaml"
 CERT_FILE="${CONFIG_DIR}/server.crt"
 KEY_FILE="${CONFIG_DIR}/server.key"
-FALLBACK_DIR="${CONFIG_DIR}/fallback"
+PROXY_SITE="https://www.bing.com"   # 伪装反代的目标网站，可自行更换
 
 SERVICE_V4="/etc/systemd/system/hysteria-v4.service"
 SERVICE_V6="/etc/systemd/system/hysteria-v6.service"
@@ -87,15 +87,7 @@ install_kernel() {
 
 # --- 4. 证书与伪装 ---
 generate_cert() {
-    mkdir -p "$CONFIG_DIR" "$FALLBACK_DIR"
-    
-    # 伪装文件
-    if [ ! -f "$FALLBACK_DIR/index.html" ]; then
-        info "生成防探测伪装页面..."
-        cat > "$FALLBACK_DIR/index.html" <<EOF
-<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr><center>nginx</center></body></html>
-EOF
-    fi
+    mkdir -p "$CONFIG_DIR"
 
     # 证书
     if [ ! -f "$CERT_FILE" ]; then
@@ -175,9 +167,12 @@ quic:
   disablePathMTUDiscovery: true
 ignoreClientBandwidth: true
 masquerade:
-  type: file
-  file:
-    dir: $FALLBACK_DIR
+  type: proxy
+  proxy:
+    url: $PROXY_SITE
+    rewriteHost: true
+    insecure: false
+    xForwarded: false
 outbounds:
   - name: v4_only
     type: direct
@@ -212,9 +207,12 @@ quic:
   disablePathMTUDiscovery: true
 ignoreClientBandwidth: true
 masquerade:
-  type: file
-  file:
-    dir: $FALLBACK_DIR
+  type: proxy
+  proxy:
+    url: $PROXY_SITE
+    rewriteHost: true
+    insecure: false
+    xForwarded: false
 outbounds:
   - name: v6_only
     type: direct
