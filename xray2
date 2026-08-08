@@ -184,7 +184,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "auto" }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -228,7 +228,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "auto" }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -265,8 +265,8 @@ install_node() {
     $INBOUND_V6
   ],
   "outbounds": [
-    { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" } },
-    { "tag": "direct-v6", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv6" } },
+    { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true}} },
+    { "tag": "direct-v6", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv6" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true}} },
     { "protocol": "blackhole", "tag": "block" }
   ],
   "routing": {
@@ -326,7 +326,7 @@ display_info() {
     echo -e "${MAGENTA}====================================================${NC}"
     echo -e "${GREEN} 节点 1: XHTTP-Reality (伪装: ${REALITY_SNI})${NC}"
     echo -e " Port: ${PORT_XHTTP} | Path: ${UUID}-xh "
-    local P_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=auto"
+    local P_XH=":${PORT_XHTTP}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${UUID}-xh&mode=stream-up"
     
     if [ -n "$IPV4_ADDR" ]; then
         echo -e "${YELLOW}vless://${UUID}@${IPV4_ADDR}${P_XH}#XHTTP-IPv4${NC}"
