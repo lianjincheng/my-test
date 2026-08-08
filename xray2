@@ -184,7 +184,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": { "tcpFastOpen": true, "tcpNoDelay": true }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -203,7 +203,7 @@ install_node() {
                     "serverNames": [ "'$REALITY_SNI'" ],
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
-                }
+                },"sockopt": { "tcpFastOpen": true, "tcpNoDelay": true }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         }'
@@ -228,7 +228,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": { "tcpFastOpen": true, "tcpNoDelay": true }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -247,7 +247,7 @@ install_node() {
                     "serverNames": [ "'$REALITY_SNI'" ],
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
-                }
+                },"sockopt": { "tcpFastOpen": true, "tcpNoDelay": true }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         }'
