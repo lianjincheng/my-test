@@ -304,14 +304,14 @@ show_info() {
     LINK_BASE="hysteria2://$PASS@"
 
     if [ -n "$IPV4" ] && [ -n "$PORT_V4" ]; then
-        LINK_PARAMS_V4=":$PORT_V4?insecure=0&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
+        LINK_PARAMS_V4=":$PORT_V4?insecure=0&sni=www.bing.com&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 1 [IPv4]:"
         echo -e "${CYAN}${LINK_BASE}${IPV4}${LINK_PARAMS_V4}#Hy2-IPv4${NC}"
         echo
     fi
 
     if [ -n "$IPV6" ] && [ -n "$PORT_V6" ]; then
-        LINK_PARAMS_V6=":$PORT_V6?insecure=0&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
+        LINK_PARAMS_V6=":$PORT_V6?insecure=0&sni=www.bing.com&pinSHA256=${URL_PINSHA}&alpn=h3&obfs=salamander&obfs-password=$OBFS"
         echo -e "节点 2 [IPv6]:"
         echo -e "${CYAN}${LINK_BASE}[${IPV6}]${LINK_PARAMS_V6}#Hy2-IPv6${NC}"
         echo
