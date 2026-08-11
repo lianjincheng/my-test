@@ -183,7 +183,7 @@ net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 
-# --- IP 转发 (VPN/Docker 必备，0是关闭，1为开启) ---
+# --- IP 转发 (安装Docker必须改为1，只跑代理可以是0) ---
 net.ipv4.ip_forward = 0
 net.ipv4.conf.all.forwarding = 0
 net.ipv4.conf.default.forwarding = 0
