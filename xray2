@@ -184,7 +184,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": {"tcpNoDelay": true }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": {"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60 }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -203,7 +203,7 @@ install_node() {
                     "serverNames": [ "'$REALITY_SNI'" ],
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
-                },"sockopt": {"tcpNoDelay": true }
+                },"sockopt": {"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60 }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         }'
@@ -228,7 +228,7 @@ install_node() {
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
                 },
-                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": {"tcpNoDelay": true }
+                "xhttpSettings": { "path": "'$UUID'-xh", "mode": "stream-up" },"sockopt": {"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60 }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         },
@@ -247,7 +247,7 @@ install_node() {
                     "serverNames": [ "'$REALITY_SNI'" ],
                     "privateKey": "'$PRIVATE_KEY'",
                     "shortIds": ["'$SHORT_ID'"],"spiderX": "/"
-                },"sockopt": {"tcpNoDelay": true }
+                },"sockopt": {"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60 }
             },
             "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
         }'
@@ -265,8 +265,8 @@ install_node() {
     $INBOUND_V6
   ],
   "outbounds": [
-    { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true}} },
-    { "tag": "direct-v6", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv6" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true}} },
+    { "tag": "direct-v4", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv4" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60}} },
+    { "tag": "direct-v6", "protocol": "freedom", "settings": { "domainStrategy": "UseIPv6" },"streamSettings": {"sockopt": {"tcpFastOpen": true,"tcpNoDelay": true,"tcpUserTimeout": 60000, "tcpKeepAliveIdle": 60}} },
     { "protocol": "blackhole", "tag": "block" }
   ],
   "routing": {
