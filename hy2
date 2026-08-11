@@ -157,15 +157,6 @@ obfs:
   type: salamander
   salamander:
     password: "$OBFS_PASS"
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
-  keepAlivePeriod: 10s
-  disablePathMTUDiscovery: false
-ignoreClientBandwidth: true
 masquerade:
   type: proxy
   proxy:
@@ -174,7 +165,7 @@ masquerade:
     insecure: false
     xForwarded: false
 outbounds:
-  - name: v4_only
+  - name: v4_first
     type: direct
     direct:
       mode: 46
@@ -197,15 +188,6 @@ obfs:
   type: salamander
   salamander:
     password: "$OBFS_PASS"
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
-  keepAlivePeriod: 10s
-  disablePathMTUDiscovery: false
-ignoreClientBandwidth: true
 masquerade:
   type: proxy
   proxy:
@@ -214,7 +196,7 @@ masquerade:
     insecure: false
     xForwarded: false
 outbounds:
-  - name: v6_only
+  - name: v6_first
     type: direct
     direct:
       mode: 64
