@@ -162,9 +162,9 @@ quic:
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
+  maxIdleTimeout: 60s
   keepAlivePeriod: 10s
-  disablePathMTUDiscovery: true
+  disablePathMTUDiscovery: false
 ignoreClientBandwidth: true
 masquerade:
   type: proxy
@@ -202,9 +202,9 @@ quic:
   maxStreamReceiveWindow: 8388608
   initConnReceiveWindow: 20971520
   maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
+  maxIdleTimeout: 60s
   keepAlivePeriod: 10s
-  disablePathMTUDiscovery: true
+  disablePathMTUDiscovery: false
 ignoreClientBandwidth: true
 masquerade:
   type: proxy
