@@ -127,7 +127,7 @@ force_cleanup() {
 }
 
 check_dependencies() {
-    local deps=("curl" "openssl" "jq" "lsof" "cron" "wireguard-tools")
+    local deps=("curl" "wget" "openssl" "jq" "lsof" "cron" "wireguard-tools")
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &>/dev/null; then
             info "安装依赖: $dep ..."
@@ -305,8 +305,10 @@ create_config_json() {
     if [ -n "$WARP_ADDRESS" ]; then HAS_WARP=true; fi
 
     local DEFAULT_DNS_TAG="dns-remote"
+    local DNS_STRATEGY="ipv4_only"
     if [ -z "$IPV4_ADDR" ] && [ -n "$IPV6_ADDR" ]; then
         DEFAULT_DNS_TAG="dns-remote-v6"
+        DNS_STRATEGY="ipv6_only"
     fi
 
     cat > "$SINGBOX_CONFIG_FILE" <<EOF
@@ -317,7 +319,7 @@ create_config_json() {
       { "tag": "dns-remote", "type": "udp", "server": "1.1.1.1" },
       { "tag": "dns-remote-v6","type": "udp", "server": "2606:4700:4700::1111" }
     ],
-    "strategy": "ipv4_only"
+    "strategy": "${DNS_STRATEGY}"
   },
 EOF
 
@@ -442,17 +444,17 @@ display_and_store_config_info() {
         success "域名抓取成功: ${ARGO_DOMAIN}"
         echo
         
-        # --- 修改开始：固定端口为443，遍历指定优选IP ---
+        # --- 修改开始：固定端口为443，遍历指定优选域名 ---
         local FIXED_PORT=443
-        local CF_IPS=("8.223.63.150" "206.190.235.108" "34.143.159.175")
+        local CF_ADDRS=("jp.cf.3666888.xyz" "zeas.top" "yg11.ygkkk.dpdns.org" "nexusmods.com" "yg10.ygkkk.dpdns.org" "cf1s.cf.3666888.xyz")
 
-        # 遍历 IP 数组生成链接
-        for current_ip in "${CF_IPS[@]}"; do
+        # 遍历优选域名数组生成链接
+        for current_addr in "${CF_ADDRS[@]}"; do
             # 生成 VLESS 链接
-            # 注意：地址(address)是优选IP，端口固定443，SNI和Host必须是Argo的临时域名
-            local argo_link="vless://${ARGO_UUID}@${current_ip}:${FIXED_PORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-${current_ip}"
+            # 注意：地址(address)是优选域名，端口固定443，SNI和Host必须是Argo的临时域名
+            local argo_link="vless://${ARGO_UUID}@${current_addr}:${FIXED_PORT}?encryption=none&security=tls&sni=${ARGO_DOMAIN}&type=ws&host=${ARGO_DOMAIN}&path=${ARGO_PATH}&fp=chrome#Argo-${current_addr}"
             
-            echo -e "${GREEN} [Argo] 优选节点 (${current_ip})${NC}"
+            echo -e "${GREEN} [Argo] 优选节点 (${current_addr})${NC}"
             echo -e "${GREEN}${argo_link}${NC}"
             echo
         done
@@ -506,7 +508,7 @@ uninstall_singbox() {
     read -p "确定卸载? (y/N): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         force_cleanup
-        rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_CMD"
+        rm -f "$SINGBOX_SERVICE_FILE" "$SINGBOX_INSTALL_PATH_EXPECTED"
         rm -rf "$SINGBOX_CONFIG_DIR"
         # [核心修复] 这里删的是 /usr/local/etc/sing-box/cert (变量值)，而不是 /etc/hysteria
         # 实际上，上面这行 rm -rf "$SINGBOX_CONFIG_DIR" 已经包含 cert 目录了
