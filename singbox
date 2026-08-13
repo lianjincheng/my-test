@@ -23,7 +23,7 @@ HYSTERIA_CERT_KEY="${HYSTERIA_CERT_DIR}/private.key"
 HYSTERIA_CERT_PEM="${HYSTERIA_CERT_DIR}/cert.pem"
 
 PERSISTENT_INFO_FILE="${SINGBOX_CONFIG_DIR}/.singbox_lite_info"
-DEFAULT_HYSTERIA_MASQUERADE_CN="cdn.jsdelivr.net"
+DEFAULT_HYSTERIA_MASQUERADE_CN="www.bing.com"
 
 # Global Vars
 SINGBOX_CMD=""
@@ -352,7 +352,7 @@ EOF
       "tag": "hy2-smart",
       "listen": "::",
       "listen_port": ${HY2_SMART_PORT},"obfs": {"type": "salamander","password": "${OBFS_PASS}"},
-      "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],"ignore_client_bandwidth": false,
+      "users": [ { "password": "${HY2_SMART_PASSWORD}" } ],
       "tls": { "enabled": true, "key_path": "${HYSTERIA_CERT_KEY}", "certificate_path": "${HYSTERIA_CERT_PEM}" }
     },
     {
@@ -419,7 +419,19 @@ display_and_store_config_info() {
 
     echo -e "${GREEN} 1. [智能] Hysteria2 ${WARP_STATUS}${NC}"
     local HY2_BASE="hy2://${HY2_SMART_PASSWORD}@"
-    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&alpn=h3&allowInsecure=1"
+
+    # 计算自签证书的 SHA256 指纹，用 pinSHA256 做证书锁定
+    # 部分新版客户端内核(如新版Xray-core)已移除allowInsecure参数，改为要求pinnedPeerCertSha256
+    # 使用pinSHA256可以让链接同时兼容新老客户端，无需依赖"跳过验证"这种不安全方式
+    local CERT_SHA256=""
+    if [ -f "$HYSTERIA_CERT_PEM" ]; then
+        CERT_SHA256=$(openssl x509 -in "$HYSTERIA_CERT_PEM" -noout -fingerprint -sha256 2>/dev/null | sed 's/^.*=//; s/://g')
+    fi
+
+    local HY2_PARAMS=":${HY2_SMART_PORT}?sni=${DEFAULT_HYSTERIA_MASQUERADE_CN}&insecure=1&alpn=h3"
+    if [ -n "$CERT_SHA256" ]; then
+        HY2_PARAMS+="&pinSHA256=${CERT_SHA256}"
+    fi
 
     if [ -n "$OBFS_PASS" ]; then
         HY2_PARAMS+="&obfs=salamander&obfs-password=${OBFS_PASS}"
