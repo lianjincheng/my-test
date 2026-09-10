@@ -107,15 +107,16 @@ net.core.netdev_max_backlog = 32768
 net.core.somaxconn = 32768
 net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_synack_retries = 5
+net.ipv4.tcp_synack_retries = 3
+net.ipv4.tcp_fin_timeout = 30
 
 # --- 3. 缓冲区优化 (大流量) ---
 # 允许的最大缓冲区 (32MB，33554432，64MB，67108848)，跑满千兆/万兆必备
-net.core.rmem_max = 67108848
-net.core.wmem_max = 67108848
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
 # TCP 自动调优范围 (最小 默认 最大)
-net.ipv4.tcp_rmem = 4096 16777216 67108848
-net.ipv4.tcp_wmem = 4096 16777216 67108848
+net.ipv4.tcp_rmem = 4096 4194304 67108864
+net.ipv4.tcp_wmem = 4096 4194304 67108864
 # UDP 缓冲区 (Hysteria 2 暴力发包需要)
 net.ipv4.udp_mem = 24576 49152 98304
 net.ipv4.udp_rmem_min = 8192
@@ -166,7 +167,7 @@ net.ipv6.conf.lo.disable_ipv6 = 0
 net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
-net.ipv4.tcp_retries2 = 15
+net.ipv4.tcp_retries2 = 8
 
 # --- 9. 连接追踪优化 (关键！防止炸内存) ---
 # 针对 Hysteria 2 UDP 流媒体优化
@@ -181,6 +182,13 @@ net.netfilter.nf_conntrack_tcp_timeout_established = 3600
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+
+net.ipv4.tcp_max_tw_buckets = 32768
+net.ipv4.tcp_max_orphans = 32768
+kernel.panic_on_oops = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.netfilter.nf_conntrack_buckets = 65536
 
 # --- IP 转发 (安装Docker必须改为1，只跑代理可以是0) ---
 net.ipv4.ip_forward = 0
