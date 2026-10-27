@@ -5,7 +5,7 @@
 #  UI: 恢复原版经典界面
 #  Fix: 彻底修复 JSON 语法错误 (采用预组装模式)
 #  Feature: 入口即出口 (严格分流) + 防偷跑 + 大流量伪装
-#  SNI: www.icloud.com | Port: 65535 (Local)
+#  SNI: www.stanford.edu | Port: 65535 (Local)
 # =========================================================
 
 # --- 基础配置 ---
@@ -16,7 +16,7 @@ SERVICE_FILE="/etc/systemd/system/xray-dual.service"
 INFO_FILE="${INSTALL_DIR}/.xray_dual_info"
 
 # 默认伪装域名
-DEFAULT_REALITY_SNI="www.icloud.com"
+DEFAULT_REALITY_SNI="www.stanford.edu"
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
